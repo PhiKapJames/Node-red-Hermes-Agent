@@ -1,0 +1,265 @@
+[
+  {
+    "id": "hermes-example-tab",
+    "type": "tab",
+    "label": "Hermes - generic sync and async",
+    "disabled": true,
+    "info": "Configure the shared connection credential before enabling. No application-specific routing is included."
+  },
+  {
+    "id": "hermes-example-connection",
+    "type": "hermes-connection",
+    "name": "Example Hermes profile",
+    "baseUrl": "http://127.0.0.1:8642",
+    "profile": "",
+    "apiKeyEnv": "HERMES_NODE_RED_API_KEY",
+    "requestTimeout": 30
+  },
+  {
+    "id": "hermes-example-queue",
+    "type": "hermes-queue",
+    "name": "One shared FIFO",
+    "maxPending": 10,
+    "cooldown": 0,
+    "pollInterval": 5,
+    "jobTimeout": 1200,
+    "requestTimeout": 30,
+    "stopTimeout": 30,
+    "retryDelay": 2,
+    "startRetries": 2
+  },
+  {
+    "id": "hermes-example-async-inject",
+    "type": "inject",
+    "z": "hermes-example-tab",
+    "name": "Test async",
+    "props": [
+      {
+        "p": "payload"
+      }
+    ],
+    "payload": "{\"text\": \"Reply with a short greeting.\", \"userId\": \"example-client\", \"name\": \"Alex\"}",
+    "payloadType": "json",
+    "once": false,
+    "repeat": "",
+    "crontab": "",
+    "x": 140,
+    "y": 160,
+    "wires": [
+      [
+        "hermes-example-async-prepare"
+      ]
+    ]
+  },
+  {
+    "id": "hermes-example-async-prepare",
+    "type": "hermes-prepare",
+    "z": "hermes-example-tab",
+    "name": "Map generic fields",
+    "inputProperty": "payload.text",
+    "clientProperty": "payload.userId",
+    "authorIdProperty": "payload.userId",
+    "authorNameProperty": "payload.name",
+    "contextProperty": "",
+    "instructions": "",
+    "instructionsProperty": "",
+    "x": 350,
+    "y": 160,
+    "wires": [
+      [
+        "hermes-example-async-agent"
+      ]
+    ]
+  },
+  {
+    "id": "hermes-example-async-agent",
+    "type": "hermes-agent",
+    "z": "hermes-example-tab",
+    "name": "Hermes async",
+    "connection": "hermes-example-connection",
+    "queue": "hermes-example-queue",
+    "mode": "async",
+    "inputProperty": "payload",
+    "model": "",
+    "instructions": "",
+    "includeContext": true,
+    "allowModelOverride": false,
+    "x": 590,
+    "y": 160,
+    "wires": [
+      [
+        "hermes-example-result"
+      ],
+      [
+        "hermes-example-progress"
+      ],
+      [
+        "hermes-example-error"
+      ]
+    ]
+  },
+  {
+    "id": "hermes-example-sync-inject",
+    "type": "inject",
+    "z": "hermes-example-tab",
+    "name": "Test sync",
+    "props": [
+      {
+        "p": "payload"
+      }
+    ],
+    "payload": "{\"text\": \"Reply with a short greeting.\", \"userId\": \"example-client\", \"name\": \"Alex\"}",
+    "payloadType": "json",
+    "once": false,
+    "repeat": "",
+    "crontab": "",
+    "x": 140,
+    "y": 320,
+    "wires": [
+      [
+        "hermes-example-sync-prepare"
+      ]
+    ]
+  },
+  {
+    "id": "hermes-example-sync-prepare",
+    "type": "hermes-prepare",
+    "z": "hermes-example-tab",
+    "name": "Map generic fields",
+    "inputProperty": "payload.text",
+    "clientProperty": "payload.userId",
+    "authorIdProperty": "payload.userId",
+    "authorNameProperty": "payload.name",
+    "contextProperty": "",
+    "instructions": "",
+    "instructionsProperty": "",
+    "x": 350,
+    "y": 320,
+    "wires": [
+      [
+        "hermes-example-sync-agent"
+      ]
+    ]
+  },
+  {
+    "id": "hermes-example-sync-agent",
+    "type": "hermes-agent",
+    "z": "hermes-example-tab",
+    "name": "Hermes sync",
+    "connection": "hermes-example-connection",
+    "queue": "hermes-example-queue",
+    "mode": "sync",
+    "inputProperty": "payload",
+    "model": "",
+    "instructions": "",
+    "includeContext": true,
+    "allowModelOverride": false,
+    "x": 590,
+    "y": 320,
+    "wires": [
+      [
+        "hermes-example-result"
+      ],
+      [
+        "hermes-example-progress"
+      ],
+      [
+        "hermes-example-error"
+      ]
+    ]
+  },
+  {
+    "id": "hermes-example-result",
+    "type": "debug",
+    "z": "hermes-example-tab",
+    "name": "result",
+    "active": true,
+    "tosidebar": true,
+    "complete": "true",
+    "targetType": "full",
+    "x": 850,
+    "y": 140,
+    "wires": []
+  },
+  {
+    "id": "hermes-example-progress",
+    "type": "debug",
+    "z": "hermes-example-tab",
+    "name": "progress",
+    "active": true,
+    "tosidebar": true,
+    "complete": "true",
+    "targetType": "full",
+    "x": 850,
+    "y": 240,
+    "wires": []
+  },
+  {
+    "id": "hermes-example-error",
+    "type": "debug",
+    "z": "hermes-example-tab",
+    "name": "error",
+    "active": true,
+    "tosidebar": true,
+    "complete": "true",
+    "targetType": "full",
+    "x": 850,
+    "y": 340,
+    "wires": []
+  },
+  {
+    "id": "hermes-example-reset-inject",
+    "type": "inject",
+    "z": "hermes-example-tab",
+    "name": "Reset shared queue",
+    "props": [
+      {
+        "p": "payload"
+      }
+    ],
+    "payload": "",
+    "payloadType": "date",
+    "once": false,
+    "repeat": "",
+    "crontab": "",
+    "x": 160,
+    "y": 460,
+    "wires": [
+      [
+        "hermes-example-reset"
+      ]
+    ]
+  },
+  {
+    "id": "hermes-example-reset",
+    "type": "hermes-control",
+    "z": "hermes-example-tab",
+    "name": "Global reset",
+    "queue": "hermes-example-queue",
+    "action": "reset",
+    "allowForce": false,
+    "x": 390,
+    "y": 460,
+    "wires": [
+      [
+        "hermes-example-control-debug"
+      ],
+      [
+        "hermes-example-error"
+      ]
+    ]
+  },
+  {
+    "id": "hermes-example-control-debug",
+    "type": "debug",
+    "z": "hermes-example-tab",
+    "name": "Queue control result",
+    "active": true,
+    "tosidebar": true,
+    "complete": "true",
+    "targetType": "full",
+    "x": 660,
+    "y": 460,
+    "wires": []
+  }
+]

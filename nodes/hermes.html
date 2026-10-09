@@ -1,0 +1,148 @@
+<script type="text/javascript">
+(function() {
+    const numeric = (value, min, max) => RED.validators.number()(value) && Number(value) >= min && Number(value) <= max;
+    RED.nodes.registerType('hermes-connection', {
+        category: 'config',
+        defaults: {
+            name: { value: '' }, baseUrl: { value: 'http://127.0.0.1:8642', required: true },
+            profile: { value: '' }, apiKeyEnv: { value: '' },
+            tls: { value: '', type: 'tls-config', required: false },
+            requestTimeout: { value: 30, validate: v => numeric(v, 1, 3600) }
+        },
+        credentials: { apiKey: { type: 'password' } },
+        label: function() { return this.name || (this.profile ? this.profile + ' @ ' : '') + this.baseUrl; }
+    });
+    RED.nodes.registerType('hermes-queue', {
+        category: 'config',
+        defaults: {
+            name: { value: '' }, maxPending: { value: 10, validate: v => numeric(v, 0, 10000) && Number.isInteger(Number(v)) },
+            cooldown: { value: 0, validate: v => numeric(v, 0, 86400) },
+            pollInterval: { value: 5, validate: v => numeric(v, 0.25, 300) },
+            jobTimeout: { value: 1200, validate: v => numeric(v, 1, 86400) },
+            requestTimeout: { value: 30, validate: v => numeric(v, 1, 3600) },
+            stopTimeout: { value: 30, validate: v => numeric(v, 1, 300) },
+            retryDelay: { value: 2, validate: v => numeric(v, 0.1, 300) },
+            startRetries: { value: 2, validate: v => numeric(v, 0, 10) && Number.isInteger(Number(v)) }
+        },
+        label: function() { return this.name || 'Shared Hermes FIFO'; }
+    });
+    RED.nodes.registerType('hermes-prepare', {
+        category: 'Hermes', color: '#c8d8e8', icon: 'font-awesome/fa-pencil',
+        defaults: {
+            name: { value: '' }, inputProperty: { value: 'payload', required: true },
+            clientProperty: { value: '' }, authorIdProperty: { value: '' }, authorNameProperty: { value: '' },
+            contextProperty: { value: '' }, instructionsProperty: { value: '' }, instructions: { value: '' }
+        },
+        inputs: 1, outputs: 1,
+        label: function() { return this.name || 'Hermes Prepare'; },
+        paletteLabel: 'prepare request'
+    });
+    RED.nodes.registerType('hermes-agent', {
+        category: 'Hermes', color: '#c8d8e8', icon: 'font-awesome/fa-comments',
+        defaults: {
+            name: { value: '' }, connection: { value: '', type: 'hermes-connection', required: true },
+            queue: { value: '', type: 'hermes-queue', required: true }, mode: { value: 'async' },
+            inputProperty: { value: 'payload', required: true }, instructions: { value: '' }, model: { value: '' },
+            includeContext: { value: true }, allowModelOverride: { value: false }
+        },
+        inputs: 1, outputs: 3,
+        outputLabels: ['final answer', 'lifecycle events', 'errors'],
+        label: function() { return this.name || 'Hermes ' + (this.mode === 'sync' ? 'Chat' : 'Agent'); },
+        paletteLabel: 'agent'
+    });
+    RED.nodes.registerType('hermes-control', {
+        category: 'Hermes', color: '#c8d8e8', icon: 'font-awesome/fa-sliders',
+        defaults: {
+            name: { value: '' }, queue: { value: '', type: 'hermes-queue', required: true },
+            action: { value: 'status' }, allowForce: { value: false }
+        },
+        inputs: 1, outputs: 2, outputLabels: ['control result', 'errors'],
+        label: function() { return this.name || 'Hermes ' + this.action; },
+        paletteLabel: 'queue control'
+    });
+})();
+</script>
+
+<script type="text/html" data-template-name="hermes-connection">
+    <div class="form-row"><label for="node-config-input-name">Name</label><input type="text" id="node-config-input-name"></div>
+    <div class="form-row"><label for="node-config-input-baseUrl">Server URL</label><input type="text" id="node-config-input-baseUrl" placeholder="https://agent.example.net"></div>
+    <div class="form-row"><label for="node-config-input-profile">Profile</label><input type="text" id="node-config-input-profile" placeholder="Blank = default profile"></div>
+    <div class="form-row"><label for="node-config-input-apiKey">API key</label><input type="password" id="node-config-input-apiKey" autocomplete="new-password"></div>
+    <div class="form-row"><label for="node-config-input-apiKeyEnv">Or env var</label><input type="text" id="node-config-input-apiKeyEnv" placeholder="HERMES_NODE_RED_API_KEY"></div>
+    <div class="form-row"><label for="node-config-input-tls">TLS config</label><input type="text" id="node-config-input-tls"></div>
+    <div class="form-row"><label for="node-config-input-requestTimeout">HTTP timeout</label><input type="number" id="node-config-input-requestTimeout" min="1" max="3600"> seconds</div>
+    <div class="form-tips">Use the selected profile's Hermes API_SERVER_KEY, not a model-provider key. A saved key takes precedence over the environment variable. Credentials are stored separately from exported flow JSON. Use HTTPS outside a trusted network.</div>
+</script>
+<script type="text/html" data-help-name="hermes-connection">
+    <p>Reusable, profile-scoped Hermes server connection. Multiple Agent nodes share this configuration and its credential.</p>
+    <p>Enter the server root (an optional reverse-proxy base path is supported). A trailing <code>/v1</code> is accepted. Do not include <code>/p/profile</code>: use Profile instead. Blank Profile uses <code>/v1</code>; a named profile uses <code>/p/name/v1</code>.</p>
+    <p>The API key is a Node-RED password credential and is excluded from ordinary editor exports. Alternatively, name a runtime environment variable. Message headers, URLs and credential overrides are never accepted. TLS verifies certificates by default; a TLS configuration can supply a custom CA.</p>
+</script>
+
+<script type="text/html" data-template-name="hermes-queue">
+    <div class="form-row"><label for="node-config-input-name">Name</label><input type="text" id="node-config-input-name"></div>
+    <div class="form-row"><label for="node-config-input-maxPending">Waiting capacity</label><input type="number" id="node-config-input-maxPending" min="0" max="10000"></div>
+    <div class="form-row"><label for="node-config-input-cooldown">Start interval</label><input type="number" id="node-config-input-cooldown" min="0"> seconds</div>
+    <div class="form-row"><label for="node-config-input-pollInterval">Poll interval</label><input type="number" id="node-config-input-pollInterval" step="0.25" min="0.25"> seconds</div>
+    <div class="form-row"><label for="node-config-input-jobTimeout">Run deadline</label><input type="number" id="node-config-input-jobTimeout" min="1"> seconds</div>
+    <div class="form-row"><label for="node-config-input-requestTimeout">Async HTTP wait</label><input type="number" id="node-config-input-requestTimeout" min="1"> seconds</div>
+    <div class="form-row"><label for="node-config-input-stopTimeout">Stop grace</label><input type="number" id="node-config-input-stopTimeout" min="1"> seconds</div>
+    <div class="form-row"><label for="node-config-input-startRetries">Admission retries</label><input type="number" id="node-config-input-startRetries" min="0" max="10"></div>
+    <div class="form-row"><label for="node-config-input-retryDelay">Retry delay</label><input type="number" id="node-config-input-retryDelay" min="0.1" step="0.1"> seconds</div>
+    <div class="form-tips">One active job for all nodes using this queue, across flows and profiles. Queues are held in memory; pending jobs do not survive a Node-RED restart. Do not deploy during important active work.</div>
+</script>
+<script type="text/html" data-help-name="hermes-queue">
+    <p>A reusable global FIFO scheduler with one active job. Agent nodes sharing it are serialized even when they use different server connections. Use separate Queue configurations for independent concurrency groups.</p>
+    <p>Start interval is a minimum between start times, not an extra delay after completion. Queue capacity excludes the active job. Overflow raises <code>QUEUE_FULL</code>; it is never silently dropped.</p>
+    <p>Unknown remote execution pauses the queue. <code>recover</code> attempts to confirm a known run has stopped. Force reset discards local tracking but can leave remote work running. Synchronous HTTP cancellation cannot prove server cancellation.</p>
+    <p>Version 0.1 uses in-memory tracking: restart/deploy does not replay pending jobs, and generated client sessions start fresh after restart. Use caller-managed session IDs for cross-restart conversations. Persistent Hindsight memory is not deleted.</p>
+</script>
+
+<script type="text/html" data-template-name="hermes-prepare">
+    <div class="form-row"><label for="node-input-name">Name</label><input type="text" id="node-input-name"></div>
+    <div class="form-row"><label for="node-input-inputProperty">Input property</label><input type="text" id="node-input-inputProperty" placeholder="payload"></div>
+    <div class="form-row"><label for="node-input-clientProperty">Client ID property</label><input type="text" id="node-input-clientProperty" placeholder="Optional msg property path"></div>
+    <div class="form-row"><label for="node-input-authorIdProperty">Author ID property</label><input type="text" id="node-input-authorIdProperty"></div>
+    <div class="form-row"><label for="node-input-authorNameProperty">Author name property</label><input type="text" id="node-input-authorNameProperty"></div>
+    <div class="form-row"><label for="node-input-contextProperty">Context property</label><input type="text" id="node-input-contextProperty"></div>
+    <div class="form-row"><label for="node-input-instructionsProperty">Instructions property</label><input type="text" id="node-input-instructionsProperty"></div>
+    <div class="form-row"><label for="node-input-instructions">Instructions</label><textarea id="node-input-instructions" rows="5" style="width:70%"></textarea></div>
+    <div class="form-tips">Property paths are relative to msg (for example payload.text, not msg.payload.text). This node only maps fields; it does not filter channels, detect commands, truncate answers or authenticate users.</div>
+</script>
+<script type="text/html" data-help-name="hermes-prepare">
+    <p>Optional transport-independent mapper for upstream application adapters. Creates <code>msg.hermes.input</code>, <code>clientId</code>, <code>author</code>, <code>context</code> and <code>instructions</code> from chosen message properties. Original routing fields remain unchanged.</p>
+    <p>Map only context you deliberately want to send to the model. Never map an entire message containing credentials. Client ID is opaque; no application-specific format is required. Map control commands to a separate Control node in your own adapter.</p>
+</script>
+
+<script type="text/html" data-template-name="hermes-agent">
+    <div class="form-row"><label for="node-input-name">Name</label><input type="text" id="node-input-name"></div>
+    <div class="form-row"><label for="node-input-connection">Connection</label><input type="text" id="node-input-connection"></div>
+    <div class="form-row"><label for="node-input-queue">Shared queue</label><input type="text" id="node-input-queue"></div>
+    <div class="form-row"><label for="node-input-mode">Mode</label><select id="node-input-mode"><option value="async">Async Runs API (poll to completion)</option><option value="sync">Sync Chat Completions</option><option value="message">From msg.hermes.mode</option></select></div>
+    <div class="form-row"><label for="node-input-inputProperty">Input property</label><input type="text" id="node-input-inputProperty" placeholder="payload"></div>
+    <div class="form-row"><label for="node-input-model">Model override</label><input type="text" id="node-input-model" placeholder="Blank = Hermes profile default"></div>
+    <div class="form-row"><label for="node-input-instructions">Instructions</label><textarea id="node-input-instructions" rows="5" style="width:70%"></textarea></div>
+    <div class="form-row"><label style="width:auto"><input type="checkbox" id="node-input-includeContext" style="width:auto"> Include supplied author/context in model input</label></div>
+    <div class="form-row"><label style="width:auto"><input type="checkbox" id="node-input-allowModelOverride" style="width:auto"> Allow msg.hermes.model to override model</label></div>
+    <div class="form-tips">Leave Model blank unless an explicit underlying model is required. The selected profile is not automatically a model ID. Final answer output contains full text; application-specific formatting belongs downstream.</div>
+</script>
+<script type="text/html" data-help-name="hermes-agent">
+    <p>Input: a prompt in <code>msg.payload</code> (or configured property). Optional <code>msg.hermes</code> fields: <code>input</code>, <code>clientId</code>, <code>sessionId</code>, <code>sessionKey</code>, <code>instructions</code>, <code>author</code>, <code>context</code>, <code>history</code>, <code>mode</code>, <code>model</code>.</p>
+    <p>Async starts a run with an idempotency key and polls using short HTTP calls. Sync holds one Chat Completions HTTP request open until the response or deadline; Node-RED itself remains nonblocking. Sync is never automatically retried.</p>
+    <p>Output 1: one successful final answer in <code>msg.payload</code> and result metadata in <code>msg.hermes</code>. Output 2: lifecycle events, payload null. Output 3: errors, payload null, detail in <code>msg.hermes.error</code>. Errors also reach a scoped Catch node. Do not join all outputs into an application response sender.</p>
+    <p>Same client ID + connection + queue continues the same generated session during this runtime. Different clients do not share transcript history. An explicit sessionId is caller-managed and is not rewritten by queue reset. Shared memory-bank policy remains on Hermes.</p>
+    <p>Keys, raw HTTP headers, reasoning_content and tool arguments are not added to outputs. Existing unrelated input properties are preserved. No reply-length limit, radio policy or reset-word parsing is implemented.</p>
+</script>
+
+<script type="text/html" data-template-name="hermes-control">
+    <div class="form-row"><label for="node-input-name">Name</label><input type="text" id="node-input-name"></div>
+    <div class="form-row"><label for="node-input-queue">Shared queue</label><input type="text" id="node-input-queue"></div>
+    <div class="form-row"><label for="node-input-action">Action</label><select id="node-input-action"><option value="status">Status</option><option value="pause">Pause new starts</option><option value="resume">Resume</option><option value="clear">Clear waiting jobs</option><option value="cancel">Cancel active or selected job</option><option value="reset">Reset queue and generated sessions</option><option value="recover">Confirm uncertain run stopped</option><option value="message">From msg.hermesControl.action</option></select></div>
+    <div class="form-row"><label style="width:auto"><input type="checkbox" id="node-input-allowForce" style="width:auto"> Allow explicit msg.hermesControl.force = true</label></div>
+    <div class="form-tips">Reset affects all Agent nodes using this queue. It does not erase Hermes history or long-term memory. A force reset may leave remote work running; use only for deliberate recovery.</div>
+</script>
+<script type="text/html" data-help-name="hermes-control">
+    <p>Shared queue administration, separate from user prompts. Choose a fixed action or pass <code>msg.hermesControl.action</code>. This node never recognizes words in msg.payload as commands.</p>
+    <p><code>reset</code> clears pending jobs, rotates generated sessions and requests active cancellation. <code>cancel</code> targets <code>msg.hermesControl.requestId</code> or the active job. <code>pause</code> blocks new starts but does not interrupt the active job. <code>resume</code> refuses uncertain execution until <code>recover</code> confirms termination or an explicitly enabled force reset releases local tracking.</p>
+    <p>Output 1 contains control result in msg.payload. Output 2 and Catch report errors. Authorization to send control messages is the upstream application's responsibility.</p>
+</script>
