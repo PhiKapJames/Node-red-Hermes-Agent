@@ -40,7 +40,7 @@ async function startRuntime(t, flows, credentials = {}) {
         if (failure) throw new Error(failure);
         if (pending.get(port)?.length) return pending.get(port).shift();
         try { return (await once(bus, port, { signal: AbortSignal.timeout(20000) }))[0]; }
-        catch (error) { throw new Error(`Runtime fixture did not produce ${port}: ${failure || diagnostics || error.message}`); }
+        catch (error) { throw new Error(`Runtime fixture did not produce ${port}: ${failure || diagnostics || error.message}`, { cause: error }); }
     }
     let closing;
     const close = () => {
@@ -49,7 +49,8 @@ async function startRuntime(t, flows, credentials = {}) {
             const exited = once(child, 'exit');
             const watchdog = setTimeout(() => child.kill('SIGKILL'), 10000);
             try {
-                child.send({ type: 'stop' });
+                if (child.connected) child.send({ type: 'stop' });
+                else child.kill('SIGTERM');
                 const [code, signal] = await exited;
                 assert.equal(signal, null, `Node-RED failed to stop: ${diagnostics}`);
                 assert.equal(code, 0, `Node-RED exited with failure: ${diagnostics}`);
