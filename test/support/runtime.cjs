@@ -20,7 +20,7 @@ async function startRuntime(t, flows, credentials = {}) {
     child.stderr.on('data', chunk => { diagnostics = (diagnostics + chunk).slice(-16000); });
     const fail = error => {
         failure = String(error);
-        if (bus.listenerCount('error')) bus.emit('error', new Error(failure));
+        bus.emit('failure', failure);
     };
     child.on('error', fail);
     child.on('exit', (code, signal) => { if (code !== 0 || signal) fail(`Runtime exit ${code}/${signal}: ${diagnostics}`); });
@@ -39,8 +39,18 @@ async function startRuntime(t, flows, credentials = {}) {
     async function next(port) {
         if (failure) throw new Error(failure);
         if (pending.get(port)?.length) return pending.get(port).shift();
-        try { return (await once(bus, port, { signal: AbortSignal.timeout(20000) }))[0]; }
-        catch (error) { throw new Error(`Runtime fixture did not produce ${port}: ${failure || diagnostics || error.message}`, { cause: error }); }
+        const controller = new AbortController();
+        const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(20000)]);
+        try {
+            return await Promise.race([
+                once(bus, port, { signal }).then(([value]) => value),
+                once(bus, 'failure', { signal }).then(([error]) => { throw new Error(error); })
+            ]);
+        } catch (error) {
+            throw new Error(`Runtime fixture did not produce ${port}: ${failure || diagnostics || error.message}`, { cause: error });
+        } finally {
+            controller.abort();
+        }
     }
     let closing;
     const close = () => {
