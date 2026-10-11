@@ -107,11 +107,16 @@ test('node help has property lists, details and references, with three distinct 
 
 test('canonical metadata and model/memory documentation retain the required distinctions', () => {
     const pkg = JSON.parse(read('package.json'));
-    assert.equal(pkg.repository.url, 'git+https://github.com/PhiKapJames/Node-red-Hermes-Agent.git');
+    const repo = 'https://github.com/PhiKapJames/node-red-contrib-hermes-agent';
+    assert.equal(pkg.repository.url, `git+${repo}.git`);
+    assert.equal(pkg.bugs.url, `${repo}/issues`);
+    assert.equal(pkg.homepage, `${repo}#readme`);
     assert.equal(pkg.author, 'PhiKapJames');
     assert.equal(pkg.dependencies, undefined);
     const docs = read('README.md');
-    assert.doesNotMatch(docs, /PhiKapJames\/Node-red-Hermes-Agent-Async/);
+    assert.match(docs, /github:PhiKapJames\/node-red-contrib-hermes-agent#main/);
+    const help = read('nodes/hermes.html');
+    assert.equal(help.split(repo).length - 1, 5);
     assert.match(docs, /direct_model_requests: true/);
     assert.match(docs, /Honcho uses it/);
     assert.match(docs, /does not isolate a statically configured Hindsight bank/);

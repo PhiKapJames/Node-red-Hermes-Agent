@@ -39,7 +39,7 @@ npm install /path/to/node-red-contrib-hermes-agent-0.3.0.tgz
 Or install the package directly from the GitHub repository:
 
 ```sh
-npm install 'github:PhiKapJames/Node-red-Hermes-Agent#main'
+npm install 'github:PhiKapJames/node-red-contrib-hermes-agent#main'
 ```
 
 A deployment should pin a reviewed commit/tag rather than a moving branch. Node-RED editors with palette upload enabled can install the `.tgz` through the Palette Manager. A normal **Import** of flow JSON will not install this package.

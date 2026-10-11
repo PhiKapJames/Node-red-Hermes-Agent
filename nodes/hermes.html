@@ -81,7 +81,7 @@
     <p>Enter the server root (an optional reverse-proxy base path is supported). A trailing <code>/v1</code> is accepted. Do not include <code>/p/profile</code>: use Profile instead. Blank Profile uses <code>/v1</code>; a named profile uses <code>/p/name/v1</code>.</p>
     <p>The API key is a Node-RED password credential and is excluded from ordinary editor exports. Alternatively, name a runtime environment variable. Message headers, URLs and credential overrides are never accepted. TLS verifies certificates by default; a TLS configuration can supply a custom CA.</p><p>Connection HTTP timeout is the client default. Async queue operations use the separate Async HTTP wait, bounded by the run deadline; Sync waits up to the run deadline.</p>
 <h3>References</h3>
-<ul><li><a href="https://github.com/PhiKapJames/Node-red-Hermes-Agent">Package documentation</a></li><li><a href="https://github.com/NousResearch/hermes-agent/blob/v0.21.6/website/docs/user-guide/features/api-server.md">Hermes API contract</a></li></ul>
+<ul><li><a href="https://github.com/PhiKapJames/node-red-contrib-hermes-agent">Package documentation</a></li><li><a href="https://github.com/NousResearch/hermes-agent/blob/v0.21.6/website/docs/user-guide/features/api-server.md">Hermes API contract</a></li></ul>
 </script>
 
 <script type="text/html" data-template-name="hermes-queue">
@@ -104,7 +104,7 @@
     <p>Unknown remote execution pauses the queue. <code>recover</code> attempts to confirm a known run has stopped. Force reset discards local tracking but can leave remote work running. Synchronous HTTP cancellation cannot prove server cancellation.</p>
     <p>Version 0.3 uses in-memory tracking: restart/deploy does not replay pending jobs, and generated client sessions start fresh after restart. Use caller-managed session IDs for cross-restart conversations. Persistent Hindsight memory is not deleted.</p><p>Async HTTP wait uses <code>asyncRequestTimeout</code> and bounds each async admission/status call, not the total run time. Node-RED 5 and Node.js 24+ are required. The removed Queue <code>requestTimeout</code> property is not read; configure Async HTTP wait on older imported queues.</p>
 <h3>References</h3>
-<ul><li><a href="https://github.com/PhiKapJames/Node-red-Hermes-Agent">Package documentation</a></li><li><a href="https://github.com/NousResearch/hermes-agent/blob/v0.21.6/website/docs/user-guide/features/api-server.md">Hermes API contract</a></li></ul>
+<ul><li><a href="https://github.com/PhiKapJames/node-red-contrib-hermes-agent">Package documentation</a></li><li><a href="https://github.com/NousResearch/hermes-agent/blob/v0.21.6/website/docs/user-guide/features/api-server.md">Hermes API contract</a></li></ul>
 </script>
 
 <script type="text/html" data-template-name="hermes-prepare">
@@ -129,7 +129,7 @@
 
     <p>Map only context you deliberately want to send to the model. Never map an entire message containing credentials. Client ID is opaque; no application-specific format is required. Map control commands to a separate Control node in your own adapter.</p><p>Author bot flag maps a boolean property. With no bot-flag mapping, an existing author.is_bot value is preserved; new authors default to false. Attribution is not authorization.</p>
 <h3>References</h3>
-<ul><li><a href="https://github.com/PhiKapJames/Node-red-Hermes-Agent">Package documentation</a></li><li><a href="https://github.com/NousResearch/hermes-agent/blob/v0.21.6/website/docs/user-guide/features/api-server.md">Hermes API contract</a></li></ul>
+<ul><li><a href="https://github.com/PhiKapJames/node-red-contrib-hermes-agent">Package documentation</a></li><li><a href="https://github.com/NousResearch/hermes-agent/blob/v0.21.6/website/docs/user-guide/features/api-server.md">Hermes API contract</a></li></ul>
 </script>
 
 <script type="text/html" data-template-name="hermes-agent">
@@ -157,7 +157,7 @@
     <p>Same client ID + connection + queue continues the same generated session during this runtime. Different clients do not share transcript history. An explicit sessionId is caller-managed and is not rewritten by queue reset. Shared memory-bank policy remains on Hermes.</p>
     <p>Keys, raw HTTP headers, reasoning_content and tool arguments are not added to outputs. Existing unrelated input properties are preserved. No reply-length limit, radio policy or reset-word parsing is implemented.</p><p>Sync model overrides require gateway.platforms.api_server.direct_model_requests: true unless selecting a configured server model route. Async Runs honors the model field. This client does not enable that server setting or select a provider for you.</p><p>sessionKey is a stable memory-scope header used by Honcho independently of transcript IDs. Use distinct keys per client when separate Honcho scopes are intended; a shared key can share that scope. This does not itself partition a statically configured Hindsight bank or authenticate a sender.</p>
 <h3>References</h3>
-<ul><li><a href="https://github.com/PhiKapJames/Node-red-Hermes-Agent">Package documentation</a></li><li><a href="https://github.com/NousResearch/hermes-agent/blob/v0.21.6/website/docs/user-guide/features/api-server.md">Hermes API contract</a></li></ul>
+<ul><li><a href="https://github.com/PhiKapJames/node-red-contrib-hermes-agent">Package documentation</a></li><li><a href="https://github.com/NousResearch/hermes-agent/blob/v0.21.6/website/docs/user-guide/features/api-server.md">Hermes API contract</a></li></ul>
 </script>
 
 <script type="text/html" data-template-name="hermes-control">
@@ -178,5 +178,5 @@
     <p><code>reset</code> clears pending jobs, rotates generated sessions and requests active cancellation. <code>cancel</code> targets <code>msg.hermesControl.requestId</code> or the active job. <code>pause</code> blocks new starts but does not interrupt the active job. <code>resume</code> refuses uncertain execution until <code>recover</code> confirms termination or an explicitly enabled force reset releases local tracking.</p>
     <p>Output 1 contains control result in msg.payload. Output 2 and Catch report errors. Authorization to send control messages is the upstream application's responsibility.</p><p>Error output and a scoped Catch both report a failure; wire one notification path to avoid duplicate application alerts. A non-force reset retains the active slot until termination is confirmed, or pauses the queue if it cannot be confirmed.</p>
 <h3>References</h3>
-<ul><li><a href="https://github.com/PhiKapJames/Node-red-Hermes-Agent">Package documentation</a></li><li><a href="https://github.com/NousResearch/hermes-agent/blob/v0.21.6/website/docs/user-guide/features/api-server.md">Hermes API contract</a></li></ul>
+<ul><li><a href="https://github.com/PhiKapJames/node-red-contrib-hermes-agent">Package documentation</a></li><li><a href="https://github.com/NousResearch/hermes-agent/blob/v0.21.6/website/docs/user-guide/features/api-server.md">Hermes API contract</a></li></ul>
 </script>
