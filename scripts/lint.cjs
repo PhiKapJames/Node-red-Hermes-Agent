@@ -4,7 +4,7 @@ const { ESLint } = require('eslint');
 
 async function main() {
     const eslint = new ESLint();
-    const results = await eslint.lintFiles(['lib/**/*.js', 'nodes/**/*.js', 'test/**/*.js', 'scripts/**/*.cjs', 'eslint.config.cjs']);
+    const results = await eslint.lintFiles(['lib/**/*.js', 'nodes/**/*.js', 'test/**/*.js', 'test/**/*.cjs', 'scripts/**/*.cjs', 'eslint.config.cjs']);
     const html = await fs.readFile('nodes/hermes.html', 'utf8');
     const scripts = [...html.matchAll(/<script type="text\/javascript">([\s\S]*?)<\/script>/g)];
     if (scripts.length !== 1) throw new Error('Expected exactly one editor JavaScript block.');

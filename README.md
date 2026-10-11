@@ -33,7 +33,7 @@ Install the supplied `.tgz` in the Node-RED user directory, then restart Node-RE
 
 ```sh
 cd ~/.node-red
-npm install /path/to/node-red-contrib-hermes-agent-0.2.0.tgz
+npm install /path/to/node-red-contrib-hermes-agent-0.3.0.tgz
 ```
 
 Or install the repository directly after the review fixes are merged:
@@ -46,11 +46,11 @@ A deployment should pin a reviewed commit/tag rather than a moving branch. Node-
 
 For the Home Assistant Community Node-RED app, additional npm modules can be configured in its `npm_packages` list. Keep existing entries and add the reviewed GitHub package specification. Restart the app afterward. Runtime package installation is separate from importing the examples.
 
-Requires **Node-RED 5.0.0+** and **Node.js 22.9.0+**. Node.js 24 is recommended by the Node-RED maintainers. CI exercises Node-RED 5 on Node.js 22 and Node.js 24. The Hermes protocol targets the v0.21.6 API contract; newer versions still need compatible endpoints. No runtime npm dependencies are required.
+Requires **Node-RED 5.0.0+** and **Node.js 24.0.0+**. Deploy the latest supported 24.x patch, not the old 24.0.0 floor. CI tests the 24.0.0 compatibility floor, current 24.x, and Node.js 26 for forward compatibility, all with Node-RED 5. The Hermes protocol targets the v0.21.6 API contract; newer versions still need compatible endpoints. No runtime npm dependencies are required.
 
-## Migration to 0.2.0 (Node-RED 5 and later)
+## Migration to 0.3.0 (Node.js 24 and Node-RED 5)
 
-This is a **breaking** upgrade from the 0.1.x package. Upgrade the Node-RED runtime to 5.0.0+ and Node.js to 22.9.0+ before installing. Node.js 24 is recommended by the Node-RED team. Node-RED 4 and Node.js 18/20 are no longer supported. See the [official Node-RED 5 release requirements](https://nodered.org/blog/2026/06/09/version-5-0-released).
+This is a **breaking** upgrade from 0.1.x/0.2.x. Upgrade Node-RED to 5.0.0+ and Node.js to 24.0.0+ before installing. Node.js 24 is recommended by the Node-RED team. Node-RED 4 and Node.js 18/20/22 are no longer supported. See the [official Node-RED 5 release requirements](https://nodered.org/blog/2026/06/09/version-5-0-released).
 
 The shared Queue config uses only **Async HTTP wait** (`asyncRequestTimeout`). Previous Queue configs that contain *only* the obsolete `requestTimeout` field now fall back to 30 seconds; explicitly set Async HTTP wait if you need another value. This does not change the Connection node's separate `requestTimeout` HTTP client default. Back up your flows and inspect existing Queue settings before enabling, and avoid a redeploy while an asynchronous Hermes run is active because queued state is in memory.
 
@@ -169,7 +169,7 @@ The optional environment setting stores only a variable name in the exported flo
 
 Use HTTPS on untrusted networks. TLS verification is enabled by default, with optional Node-RED TLS config for a private CA. Redirects are rejected rather than forwarding bearer credentials. The package is an authenticated API client, not a sandbox for Hermes tools; tool permissions remain a Hermes-side responsibility. Author/client labels and input instructions are not authorization.
 
-## Known limits in 0.2.0
+## Known limits in 0.3.0
 
 **Queues and pending-job tracking are in memory.** A Node-RED restart or deployment that recreates these nodes does not resume polling or replay waiting jobs. Shutdown requests cancellation where possible, but a lost connection can leave remote work executing. Generated conversations start fresh after restart to avoid resurrecting a pre-reset session; applications requiring continuity must persist and supply their own `sessionId`.
 
@@ -177,7 +177,7 @@ There is no exactly-once delivery guarantee across process crashes. Durable job 
 
 ## Develop and test
 
-Development checks use ESLint 10 and require Node.js 22.13+; Node.js 24 is recommended for development and deployment. The installed package has no runtime lint dependency.
+Development and deployment require Node.js 24+. Use `nvm use` with the supplied `.nvmrc`, and keep the selected 24.x release patched. The installed package has no runtime lint dependency.
 
 ```sh
 npm ci
@@ -189,11 +189,11 @@ npm pack
 The fast suite uses Node's built-in test runner and localhost HTTP fixtures. `npm run check` includes syntax checks and ESLint for runtime code, tests, and the editor script embedded in `nodes/hermes.html`. ESLint is development-only; the package still has no runtime npm dependencies. For actual Node-RED runtime integration tests:
 
 ```sh
-npm install --no-save --package-lock=false node-red@5 node-red-node-test-helper
-node --test test/integration/node-red.test.js
+npm install --no-save --package-lock=false --ignore-scripts node-red@5
+npm run test:integration
 ```
 
-CI runs the fast suite on Node.js 22/24 and Node-RED 5 runtime tests against a mock Hermes server. Neither substitutes for a test against your own Hermes deployment. The package has no runtime dependencies and ships no credentials or application-specific adapters.
+CI runs the fast suite on Node.js 24.0.0, current 24.x and 26. Integration tests boot an isolated real Node-RED 5 process for every fixture through its embedding API, with a temporary user directory and mock Hermes server. There is no Node-RED test-helper/Sinon dependency or patched fake runtime; Catch and Complete nodes, credentials, sessions, errors and shutdown are exercised end to end. Deprecation warnings fail test commands rather than being hidden. Neither substitutes for a test against your own Hermes deployment. The package has no runtime dependencies and ships no credentials or application-specific adapters.
 
 ## References
 
@@ -208,3 +208,11 @@ MIT licensed. Independent integration; not an official Nous Research or Node-RED
 
 
 Review disposition and intentionally deferred release decisions are recorded in [docs/review-disposition.md](docs/review-disposition.md).
+
+## Node.js 24 modernization
+
+HTTP response handling now uses async stream iteration with a composed `AbortSignal.any()` for caller cancellation, connection shutdown and the full-response `AbortSignal.timeout()`. Queue backoff, polling and cooldowns use `node:timers/promises` and abortable delays instead of manual timer/wake callbacks. Node handlers use `async`/`await` and one `done()` completion in `finally`.
+
+The HTTP implementation intentionally keeps one native `http`/`https` transport rather than switching to `fetch()`: this preserves per-connection custom CA/client certificates and Node-RED TLS options without importing Undici, mutating a global dispatcher or adding a second fallback transport. Redirect blocking, 2 MiB request / 8 MiB response limits, credential redaction, idempotent admission and confirmed remote cancellation remain enforced. Local abort before dispatch is distinguished from uncertain remote execution after dispatch.
+
+No runtime npm dependencies are introduced. The old test helper and its Sinon-related dependency chain are no longer installed. This is not a guarantee against future upstream deprecations; CI explicitly tests for deprecation regressions. See [the modernization decision record](docs/node24-modernization.md).
