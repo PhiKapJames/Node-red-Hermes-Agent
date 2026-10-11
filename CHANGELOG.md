@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.0 — Node.js 24+ modernization
+
+Breaking: Node.js 24.0.0+ is now required alongside Node-RED 5+. Refactor native HTTP around async response streams and composed abort/deadline signals while retaining TLS and size limits. Use abortable promise timers for queue polling, cooldown and retry waits, simplify input/shutdown handlers with async/await, and cancel late known admissions on shutdown. Replace the deprecated Node-RED test helper with isolated embedded Node-RED process fixtures using node:test. CI covers the exact Node 24 floor, current 24.x and Node 26 forward compatibility. No runtime dependencies, credential changes, server-profile changes or radio-specific policy are added.
+
 ## 0.2.0 — Node-RED 5 and later only
 
 Breaking release: require Node-RED 5.0.0+ and Node.js 22.9.0+. Remove Node-RED 4 support, runtime callback shims, and the previous Queue `requestTimeout` compatibility path; `asyncRequestTimeout` is the only Queue HTTP-wait setting (default 30 seconds), while the Connection `requestTimeout` remains unchanged. Simplify asynchronous queue promises using native `Promise.withResolvers()`, update the example Inject nodes to include fully typed `props[]`, and run the CI matrix exclusively on Node-RED 5 with Node.js 22/24. Existing transport-independent request contracts, credentials, session isolation, and reset/cancellation safeguards are retained. See the README for migration instructions; no Hermes server or radio-specific configuration changes are required.
