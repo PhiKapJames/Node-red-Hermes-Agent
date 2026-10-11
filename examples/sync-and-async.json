@@ -23,10 +23,10 @@
     "cooldown": 0,
     "pollInterval": 5,
     "jobTimeout": 1200,
-    "requestTimeout": 30,
     "stopTimeout": 30,
     "retryDelay": 2,
-    "startRetries": 2
+    "startRetries": 2,
+    "asyncRequestTimeout": 30
   },
   {
     "id": "hermes-example-async-inject",
@@ -35,7 +35,8 @@
     "name": "Test async",
     "props": [
       {
-        "p": "payload"
+        "p": "payload",
+        "vt": "json"
       }
     ],
     "payload": "{\"text\": \"Reply with a short greeting.\", \"userId\": \"example-client\", \"name\": \"Alex\"}",
@@ -69,7 +70,8 @@
       [
         "hermes-example-async-agent"
       ]
-    ]
+    ],
+    "authorIsBotProperty": ""
   },
   {
     "id": "hermes-example-async-agent",
@@ -105,7 +107,8 @@
     "name": "Test sync",
     "props": [
       {
-        "p": "payload"
+        "p": "payload",
+        "vt": "json"
       }
     ],
     "payload": "{\"text\": \"Reply with a short greeting.\", \"userId\": \"example-client\", \"name\": \"Alex\"}",
@@ -139,7 +142,8 @@
       [
         "hermes-example-sync-agent"
       ]
-    ]
+    ],
+    "authorIsBotProperty": ""
   },
   {
     "id": "hermes-example-sync-agent",
@@ -214,7 +218,8 @@
     "name": "Reset shared queue",
     "props": [
       {
-        "p": "payload"
+        "p": "payload",
+        "vt": "date"
       }
     ],
     "payload": "",
