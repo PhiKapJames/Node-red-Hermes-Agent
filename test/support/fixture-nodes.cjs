@@ -6,15 +6,6 @@ const output = new EventEmitter();
 let inspect;
 
 module.exports = function(RED) {
-    // Embedded Node-RED runtimes without an editor may not preload these
-    // built-in event nodes. Register the actual Node-RED implementations,
-    // not mocks, before loading the fixture flow's Catch/Complete nodes.
-    for (const [type, file] of [
-        ['catch', '@node-red/nodes/core/common/25-catch.js'],
-        ['complete', '@node-red/nodes/core/common/24-complete.js']
-    ]) {
-        if (!RED.nodes.getType(type)) require(file)(RED);
-    }
     function Input(config) {
         RED.nodes.createNode(this, config);
         inputs.set(this.id, this);

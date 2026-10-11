@@ -31,6 +31,14 @@ async function setup(t, target, options = {}) {
         { id: 'complete', type: 'complete', z: 'tab', scope: ['target'], uncaught: false, wires: [['done']] },
         ...['out', 'events', 'errors', 'caught', 'done', 'controlOut'].map(id => ({ id, type: 'fixture-probe', z: 'tab' }))
     ];
+    // Node-RED classifies z-scoped nodes without x/y as config nodes.
+    // Match actual editor-exported flows: every wired node has coordinates.
+    flows.forEach((node, index) => {
+        if (node.z && Number.isFinite(node.x) === false && Number.isFinite(node.y) === false) {
+            node.x = 160 + (index % 4) * 190;
+            node.y = 80 + Math.floor(index / 4) * 70;
+        }
+    });
     const runtime = await startRuntime(t, flows, { connection: { apiKey: 'fixture-only-key' } });
     return { runtime, calls, flows };
 }
