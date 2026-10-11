@@ -12,28 +12,24 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - node: 22
-            runtime: 4
-          - node: 24
-            runtime: 5
+        node: [22, 24]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: ${{ matrix.node }}
       - run: npm ci --ignore-scripts
       - run: npm run check
       - run: npm test
-      - name: Install isolated Node-RED integration-test dependencies
-        run: npm install --no-save --package-lock=false node-red@${{ matrix.runtime }} node-red-node-test-helper
-      - name: Test real Node-RED runtime against mock Hermes server
+      - name: Install Node-RED 5 integration-test dependencies
+        run: npm install --no-save --package-lock=false node-red@5 node-red-node-test-helper
+      - name: Test Node-RED 5 runtime against mock Hermes server
         run: node --test test/integration/*.test.js
       - run: npm pack
-        if: matrix.node == 22
-      - uses: actions/upload-artifact@v4
-        if: matrix.node == 22
+        if: matrix.node == 24
+      - uses: actions/upload-artifact@v7
+        if: matrix.node == 24
         with:
-          name: hermes-node-red-package
+          name: hermes-node-red-5-package
           path: '*.tgz'
           if-no-files-found: error

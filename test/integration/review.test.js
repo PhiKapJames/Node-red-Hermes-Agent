@@ -102,10 +102,10 @@ test('real Node-RED Control uses traced done(error) without duplicate Catch mess
 });
 
 for (const [name, config, expected] of [
-    ['legacy import', { requestTimeout: 47 }, 47000],
-    ['new setting wins', { requestTimeout: 47, asyncRequestTimeout: 83 }, 83000]
+    ['default', {}, 30000],
+    ['configured', { asyncRequestTimeout: 83 }, 83000]
 ]) {
-    test(`real Node-RED Queue timeout: ${name}`, { timeout: 15000 }, async t => {
+    test(`real Node-RED 5 Queue timeout: ${name}`, { timeout: 15000 }, async t => {
         await setup(t, { type: 'hermes-control', action: 'status', wires: [['out'], ['errors']] }, config);
         assert.equal(helper.getNode('queue').scheduler.requestTimeoutMs, expected);
     });

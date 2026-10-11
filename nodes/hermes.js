@@ -10,7 +10,6 @@ function number(value, fallback, min, max, name) {
     if (!Number.isFinite(parsed) || parsed < min || parsed > max) throw new HermesError('CONFIG', `${name} must be between ${min} and ${max}.`);
     return parsed;
 }
-function closeCallback(removed, done) { return typeof removed === 'function' ? removed : done || (() => {}); }
 
 module.exports = function(RED) {
     const clone = msg => RED.util.cloneMessage(msg);
@@ -37,7 +36,10 @@ module.exports = function(RED) {
             node.configError = publicError(error, [node.readKey()]);
             node.error(node.configError.message);
         }
-        node.on('close', (removed, done) => { node.client?.close(); closeCallback(removed, done)(); });
+        node.on('close', (_removed, done) => {
+            try { node.client?.close(); }
+            finally { done(); }
+        });
     }
     RED.nodes.registerType('hermes-connection', Connection, { credentials: { apiKey: { type: 'password' } } });
 
@@ -54,16 +56,18 @@ module.exports = function(RED) {
                 cooldownMs: number(config.cooldown, 0, 0, 86400, 'Cooldown') * 1000,
                 pollIntervalMs: number(config.pollInterval, 5, 0.25, 300, 'Poll interval') * 1000,
                 jobTimeoutMs: number(config.jobTimeout, 1200, 1, 86400, 'Run deadline') * 1000,
-                requestTimeoutMs: number(config.asyncRequestTimeout ?? config.requestTimeout, 30, 1, 3600, 'Async HTTP timeout') * 1000,
+                requestTimeoutMs: number(config.asyncRequestTimeout, 30, 1, 3600, 'Async HTTP timeout') * 1000,
                 stopTimeoutMs: number(config.stopTimeout, 30, 1, 300, 'Cancellation grace') * 1000,
                 retryDelayMs: number(config.retryDelay, 2, 0.1, 300, 'Retry delay') * 1000,
                 startRetries: Math.floor(number(config.startRetries, 2, 0, 10, 'Admission retries'))
             });
         } catch (error) { node.configError = publicError(error); node.error(node.configError.message); }
-        node.on('close', (removed, done) => {
-            const cb = closeCallback(removed, done);
+        node.on('close', (_removed, done) => {
             if (node.scheduler?.active) node.warn('Queue is stopping with active work; remote cancellation is best effort. Pending requests are not persisted.');
-            Promise.resolve(node.scheduler?.close()).then(() => cb(), () => cb());
+            Promise.resolve()
+                .then(() => node.scheduler?.close())
+                .catch(error => node.warn(`Hermes queue shutdown: ${publicError(error).message}`))
+                .finally(done);
         });
     }
     RED.nodes.registerType('hermes-queue', Queue);
@@ -72,8 +76,6 @@ module.exports = function(RED) {
         RED.nodes.createNode(this, config);
         const node = this;
         node.on('input', (msg, send, done) => {
-            send = send || node.send.bind(node);
-            done = done || (error => { if (error) node.error(error, msg); });
             try {
                 if (msg.hermes !== undefined && !plainObject(msg.hermes)) throw new HermesError('INVALID_INPUT', 'Existing msg.hermes must be an object.');
                 const options = { ...(msg.hermes || {}) };
@@ -135,8 +137,6 @@ module.exports = function(RED) {
         queue?.on('progress', progress);
         if (!connection?.client || !queue) node.status({ fill: 'red', shape: 'ring', text: 'check configuration' });
         node.on('input', (msg, send, done) => {
-            send = send || node.send.bind(node);
-            done = done || (error => { if (error) node.error(error, msg); });
             const original = clone(msg);
             let requestId;
             const fail = error => {
@@ -177,11 +177,11 @@ module.exports = function(RED) {
                 }).catch(fail);
             } catch (error) { fail(error); }
         });
-        node.on('close', (removed, done) => {
+        node.on('close', (_removed, done) => {
             closed = true;
             queue?.removeListener('progress', progress);
             queue?.cancelOwner(node.id);
-            closeCallback(removed, done)();
+            done();
         });
     }
     RED.nodes.registerType('hermes-agent', Agent);
@@ -191,8 +191,6 @@ module.exports = function(RED) {
         const node = this;
         const queue = RED.nodes.getNode(config.queue)?.scheduler;
         node.on('input', async (msg, send, done) => {
-            send = send || node.send.bind(node);
-            done = done || (error => { if (error) node.error(error, msg); });
             try {
                 if (!queue) throw new HermesError('CONFIG', 'Select a shared Hermes queue.');
                 const options = msg.hermesControl || {};

@@ -1,14 +1,14 @@
 {
   "name": "node-red-contrib-hermes-agent",
-  "version": "0.1.0",
-  "description": "Transport-independent Node-RED nodes for Nous Research Hermes Agent: shared credentials, sync chat, asynchronous runs, sessions and queue controls.",
+  "version": "0.2.0",
+  "description": "Transport-independent Node-RED 5+ Hermes Agent nodes: shared credentials, synchronous chat, asynchronous Runs, sessions and queue controls.",
   "license": "MIT",
   "main": "nodes/hermes.js",
   "engines": {
-    "node": ">=18.17.0"
+    "node": ">=22.9.0"
   },
   "node-red": {
-    "version": ">=4.0.0",
+    "version": ">=5.0.0",
     "nodes": {
       "hermes-agent": "nodes/hermes.js"
     }
@@ -35,7 +35,8 @@
     "nousresearch",
     "agents",
     "async",
-    "queue"
+    "queue",
+    "node-red-5"
   ],
   "repository": {
     "type": "git",

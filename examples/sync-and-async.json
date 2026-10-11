@@ -36,7 +36,8 @@
     "props": [
       {
         "p": "payload",
-        "vt": "json"
+        "vt": "json",
+        "v": "{\"text\": \"Reply with a short greeting.\", \"userId\": \"example-client\", \"name\": \"Alex\"}"
       }
     ],
     "payload": "{\"text\": \"Reply with a short greeting.\", \"userId\": \"example-client\", \"name\": \"Alex\"}",
@@ -108,7 +109,8 @@
     "props": [
       {
         "p": "payload",
-        "vt": "json"
+        "vt": "json",
+        "v": "{\"text\": \"Reply with a short greeting.\", \"userId\": \"example-client\", \"name\": \"Alex\"}"
       }
     ],
     "payload": "{\"text\": \"Reply with a short greeting.\", \"userId\": \"example-client\", \"name\": \"Alex\"}",
@@ -219,7 +221,8 @@
     "props": [
       {
         "p": "payload",
-        "vt": "date"
+        "vt": "date",
+        "v": ""
       }
     ],
     "payload": "",

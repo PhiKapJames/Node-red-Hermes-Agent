@@ -79,18 +79,13 @@ test('author bot flags are boolean and are not silently coerced', () => {
     assert.throws(() => prepareRequest('Hello', { author: { name: 'Agent', is_bot: 'false' } }), { code: 'INVALID_INPUT' });
 });
 
-test('editor migrates legacy Queue timeout without losing its value', () => {
-    const { definitions, values } = editorDefinitions();
+test('Node-RED 5 editor uses only the async HTTP timeout configuration', () => {
+    const { definitions } = editorDefinitions();
     const queue = definitions['hermes-queue'];
-    const legacy = { requestTimeout: 47 };
-    queue.oneditprepare.call(legacy);
-    assert.equal(values['#node-config-input-asyncRequestTimeout'], 47);
-    queue.oneditsave.call(legacy);
-    assert.equal(Object.hasOwn(legacy, 'requestTimeout'), false);
-    queue.oneditprepare.call({ requestTimeout: 47, asyncRequestTimeout: 83 });
-    assert.equal(values['#node-config-input-asyncRequestTimeout'], 83);
-    queue.oneditprepare.call({});
-    assert.equal(values['#node-config-input-asyncRequestTimeout'], 30);
+    assert.equal(queue.defaults.asyncRequestTimeout.value, 30);
+    assert.equal(Object.hasOwn(queue.defaults, 'requestTimeout'), false);
+    assert.equal(Object.hasOwn(queue, 'oneditprepare'), false);
+    assert.equal(Object.hasOwn(queue, 'oneditsave'), false);
     assert.ok(definitions['hermes-prepare'].defaults.authorIsBotProperty);
 });
 

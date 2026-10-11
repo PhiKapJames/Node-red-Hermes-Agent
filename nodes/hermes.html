@@ -20,17 +20,12 @@
             cooldown: { value: 0, validate: v => numeric(v, 0, 86400) },
             pollInterval: { value: 5, validate: v => numeric(v, 0.25, 300) },
             jobTimeout: { value: 1200, validate: v => numeric(v, 1, 86400) },
-            asyncRequestTimeout: { value: undefined, validate: v => v === undefined || numeric(v, 1, 3600) },
-            requestTimeout: { value: undefined }, // legacy import compatibility
+            asyncRequestTimeout: { value: 30, validate: v => numeric(v, 1, 3600) },
             stopTimeout: { value: 30, validate: v => numeric(v, 1, 300) },
             retryDelay: { value: 2, validate: v => numeric(v, 0.1, 300) },
             startRetries: { value: 2, validate: v => numeric(v, 0, 10) && Number.isInteger(Number(v)) }
         },
-        label: function() { return this.name || 'Shared Hermes FIFO'; },
-        oneditprepare: function() {
-            $('#node-config-input-asyncRequestTimeout').val(this.asyncRequestTimeout ?? this.requestTimeout ?? 30);
-        },
-        oneditsave: function() { delete this.requestTimeout; }
+        label: function() { return this.name || 'Shared Hermes FIFO'; }
     });
     RED.nodes.registerType('hermes-prepare', {
         category: 'Hermes', color: '#c8d8e8', icon: 'font-awesome/fa-pencil',
@@ -107,7 +102,7 @@
 
     <p>Start interval is a minimum between start times, not an extra delay after completion. Queue capacity excludes the active job. Overflow raises <code>QUEUE_FULL</code>; it is never silently dropped.</p>
     <p>Unknown remote execution pauses the queue. <code>recover</code> attempts to confirm a known run has stopped. Force reset discards local tracking but can leave remote work running. Synchronous HTTP cancellation cannot prove server cancellation.</p>
-    <p>Version 0.1 uses in-memory tracking: restart/deploy does not replay pending jobs, and generated client sessions start fresh after restart. Use caller-managed session IDs for cross-restart conversations. Persistent Hindsight memory is not deleted.</p><p>Async HTTP wait is stored as asyncRequestTimeout; legacy requestTimeout imports remain supported. It bounds each async admission or status call, not the total run time.</p>
+    <p>Version 0.2 uses in-memory tracking: restart/deploy does not replay pending jobs, and generated client sessions start fresh after restart. Use caller-managed session IDs for cross-restart conversations. Persistent Hindsight memory is not deleted.</p><p>Async HTTP wait uses <code>asyncRequestTimeout</code> and bounds each async admission/status call, not the total run time. Node-RED 5 and Node.js 22.9+ are required. The removed Queue <code>requestTimeout</code> property is not read; configure Async HTTP wait on older imported queues.</p>
 <h3>References</h3>
 <ul><li><a href="https://github.com/PhiKapJames/Node-red-Hermes-Agent">Package documentation</a></li><li><a href="https://github.com/NousResearch/hermes-agent/blob/v0.21.6/website/docs/user-guide/features/api-server.md">Hermes API contract</a></li></ul>
 </script>

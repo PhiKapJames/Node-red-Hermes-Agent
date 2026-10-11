@@ -1,5 +1,7 @@
 # Review follow-up disposition
 
+> Historical 0.1.x review record. Version 0.2.0 is Node-RED 5-only: it removes compatibility for the former Queue `requestTimeout` property and input/close callback fallbacks. See the current README for supported configurations.
+
 Basis: the supplied review of PR #1 at `a7dbf54`, checked against the implementation and the Hermes v0.21.6 contract. The old PR is now merged; these corrections are a separate follow-up. No application-specific adapter policies were added.
 
 | Finding | Disposition |
