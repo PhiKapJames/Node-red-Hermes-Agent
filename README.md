@@ -36,10 +36,10 @@ cd ~/.node-red
 npm install /path/to/node-red-contrib-hermes-agent-0.1.0.tgz
 ```
 
-Or install the implementation branch directly while the pull request is under review:
+Or install the repository directly after the review fixes are merged:
 
 ```sh
-npm install 'github:PhiKapJames/Node-red-Hermes-Agent-Async#feat/transport-agnostic-hermes-nodes'
+npm install 'github:PhiKapJames/Node-red-Hermes-Agent#main'
 ```
 
 A deployment should pin a reviewed commit/tag rather than a moving branch. Node-RED editors with palette upload enabled can install the `.tgz` through the Palette Manager. A normal **Import** of flow JSON will not install this package.
@@ -78,15 +78,15 @@ Optional fields:
 | `input` | Nonempty string; overrides the configured input property. |
 | `clientId` | Gives this client a stable generated conversation during this runtime. |
 | `sessionId` | Explicit caller-managed transcript ID; used verbatim. |
-| `sessionKey` | Optional `X-Hermes-Session-Key`; no memory-partition guarantee is implied. |
+| `sessionKey` | Optional stable `X-Hermes-Session-Key`, independent of the transcript ID. Honcho uses it for memory scoping: use a distinct key per client when separate scopes are intended; a shared key can share that scope. Other memory providers depend on their own configuration. |
 | `author` | `{id, name, is_bot}`. Attribution only, not authentication. |
 | `context` | JSON-serializable model-visible data, capped at 16 KiB. |
 | `instructions` | Appended to the Agent node's configured instructions. |
 | `history` | Optional explicit array of `{role, content}` text messages. Overrides server-history loading. |
 | `mode` | `sync` or `async`; honored only when Agent mode is **From message**. |
-| `model` | Explicit underlying model override; honored only when enabled in Agent settings. |
+| `model` | Per-message model override; accepted only when enabled in Agent settings. Async honors it. Sync also requires the Hermes server setting described below (unless selecting a server-defined model route). |
 
-The optional Prepare node maps arbitrary message properties into this contract. There is no prescribed sender-ID format. Inputs, client context, and instructions are bounded and validated before queue admission.
+The optional Prepare node maps arbitrary message properties into this contract. Its optional **Author bot flag property** maps a boolean to `author.is_bot`; otherwise a previously supplied flag is preserved. Omitted flags default to false. String values such as `"false"` are rejected rather than coerced. There is no prescribed sender-ID format. Inputs, client context, and instructions are bounded and validated before queue admission.
 
 By default, supplied author/context is included in the actual model input as labeled data. The Agent checkbox can disable this prompt injection while retaining API author attribution. Existing application routing properties on the Node-RED message are preserved, but are **not automatically sent to Hermes**.
 
@@ -109,7 +109,7 @@ The module emits at most one successful final-answer message for a submitted job
 
 **Output 2 — lifecycle events:** `queued`, `starting`, `accepted`, `running`, `retrying`, `waiting_for_approval`, `stopping`, `completed`, `cancelled`, `failed` or `uncertain`. Event fields are in `msg.hermes`; `msg.payload` is null. Polls only emit a normal state event when state changes.
 
-**Output 3 — errors:** `msg.hermes.error` includes a stable `code`, sanitized `message`, `statusCode`, `retryable` and `remoteUnknown`. `msg.payload` is null. Errors also trigger a scoped Catch node; handle either output 3 or Catch to avoid duplicate application error notifications.
+**Output 3 — errors:** `msg.hermes.error` includes a stable `code`, sanitized `message`, `statusCode`, `retryable` and `remoteUnknown`. `msg.payload` is null. Errors are passed to Node-RED through `done(error)` and also trigger a scoped Catch node; handle either output 3 or Catch to avoid duplicate application error notifications.
 
 Raw response bodies are intentionally not an output option. Error messages are bounded and redact the configured API key and recognizable bearer strings. This does not replace application-level protection against secrets appearing inside ordinary model-generated prose.
 
@@ -119,11 +119,17 @@ Raw response bodies are intentionally not an output option. Error messages are b
 
 **Async** makes `POST /v1/runs` and then short `GET /v1/runs/{run_id}` calls. A stable per-job `Idempotency-Key` is reused for admission retries. The queue remains reserved until completion or confirmed cancellation. Async is the default.
 
+### Sync model-override prerequisite
+
+On Hermes v0.21.6, a bare `model` on `/v1/chat/completions` is ignored unless `gateway.platforms.api_server.direct_model_requests: true`, except when it selects a configured `model_routes` alias. `/v1/runs` honors a supplied model. The Agent's local override checkbox does not enable this server setting. Leave Model blank to keep using the profile default, or configure the server deliberately; the client does not add a provider or alter credentials.
+
+`sessionKey` is forwarded as `X-Hermes-Session-Key`. Honcho uses it to maintain a stable memory scope independently of transcript resets. Two clients given the same key can share that scope; assign distinct application-managed keys when separation is intended. This header alone does not isolate a statically configured Hindsight bank and is not an authorization mechanism.
+
 Model is omitted by default on both APIs. A profile name is not assumed to be a model ID. URL/profile and credentials are fixed by the shared Connection node; incoming `msg.url`, `msg.headers`, keys or provider names cannot redirect the connection.
 
 ## Queue and reset semantics
 
-One Queue configuration is one global FIFO and one active job. Different clients keep different transcripts while being globally serialized. Separate Queue configurations create separate concurrency groups. The optional minimum start interval defaults to zero and applies globally within that queue.
+One Queue configuration is one global FIFO and one active job. Different clients keep different transcripts while being globally serialized. Separate Queue configurations create separate concurrency groups. The optional minimum start interval defaults to zero and applies globally within that queue. **Async HTTP wait** (`asyncRequestTimeout`) bounds individual admission/status requests; **Run deadline** bounds the overall job. The Connection timeout is the client default; Sync uses the run deadline. Legacy Queue `requestTimeout` imports remain supported and migrate on editor save.
 
 Control messages go to a separate **Hermes Control** node:
 
@@ -163,6 +169,8 @@ There is no exactly-once delivery guarantee across process crashes. Durable job 
 
 ## Develop and test
 
+Development checks use ESLint 10 and require Node.js 22.13+ or Node.js 24+. The installed package has no runtime lint dependency.
+
 ```sh
 npm ci
 npm run check
@@ -170,7 +178,7 @@ npm test
 npm pack
 ```
 
-The fast suite uses Node's built-in test runner and localhost HTTP fixtures. For actual Node-RED runtime integration tests:
+The fast suite uses Node's built-in test runner and localhost HTTP fixtures. `npm run check` includes syntax checks and ESLint for runtime code, tests, and the editor script embedded in `nodes/hermes.html`. ESLint is development-only; the package still has no runtime npm dependencies. For actual Node-RED runtime integration tests:
 
 ```sh
 npm install --no-save --package-lock=false node-red@4 node-red-node-test-helper
@@ -187,3 +195,6 @@ CI runs the fast suite and real Node-RED runtime tests against a mock Hermes ser
 - [Home Assistant Community Node-RED app configuration](https://github.com/hassio-addons/repository/blob/master/node-red/DOCS.md)
 
 MIT licensed. Independent integration; not an official Nous Research or Node-RED package.
+
+
+Review disposition and intentionally deferred release decisions are recorded in [docs/review-disposition.md](docs/review-disposition.md).

@@ -54,7 +54,7 @@ module.exports = function(RED) {
                 cooldownMs: number(config.cooldown, 0, 0, 86400, 'Cooldown') * 1000,
                 pollIntervalMs: number(config.pollInterval, 5, 0.25, 300, 'Poll interval') * 1000,
                 jobTimeoutMs: number(config.jobTimeout, 1200, 1, 86400, 'Run deadline') * 1000,
-                requestTimeoutMs: number(config.requestTimeout, 30, 1, 3600, 'Async HTTP timeout') * 1000,
+                requestTimeoutMs: number(config.asyncRequestTimeout ?? config.requestTimeout, 30, 1, 3600, 'Async HTTP timeout') * 1000,
                 stopTimeoutMs: number(config.stopTimeout, 30, 1, 300, 'Cancellation grace') * 1000,
                 retryDelayMs: number(config.retryDelay, 2, 0.1, 300, 'Retry delay') * 1000,
                 startRetries: Math.floor(number(config.startRetries, 2, 0, 10, 'Admission retries'))
@@ -73,7 +73,7 @@ module.exports = function(RED) {
         const node = this;
         node.on('input', (msg, send, done) => {
             send = send || node.send.bind(node);
-            done = done || (() => {});
+            done = done || (error => { if (error) node.error(error, msg); });
             try {
                 if (msg.hermes !== undefined && !plainObject(msg.hermes)) throw new HermesError('INVALID_INPUT', 'Existing msg.hermes must be an object.');
                 const options = { ...(msg.hermes || {}) };
@@ -84,12 +84,19 @@ module.exports = function(RED) {
                     if (typeof value !== 'string' && typeof value !== 'number') throw new HermesError('INVALID_INPUT', 'The mapped client ID is missing or not a string/number.');
                     options.clientId = String(value);
                 }
-                if (config.authorIdProperty || config.authorNameProperty) {
-                    options.author = {
-                        ...(config.authorIdProperty ? { id: property(msg, config.authorIdProperty) } : {}),
-                        ...(config.authorNameProperty ? { name: property(msg, config.authorNameProperty) } : {}),
-                        is_bot: false
-                    };
+                if (config.authorIdProperty || config.authorNameProperty || config.authorIsBotProperty) {
+                    if (options.author !== undefined && !plainObject(options.author)) {
+                        throw new HermesError('INVALID_INPUT', 'Existing author must be an object.');
+                    }
+                    const author = { ...(options.author || {}) };
+                    if (config.authorIdProperty) author.id = property(msg, config.authorIdProperty);
+                    if (config.authorNameProperty) author.name = property(msg, config.authorNameProperty);
+                    if (config.authorIsBotProperty) {
+                        const value = property(msg, config.authorIsBotProperty);
+                        if (typeof value !== 'boolean') throw new HermesError('INVALID_INPUT', 'Mapped author bot flag must be a boolean.');
+                        author.is_bot = value;
+                    } else if (author.is_bot === undefined) author.is_bot = false;
+                    options.author = author;
                 }
                 if (config.contextProperty) options.context = property(msg, config.contextProperty);
                 const instructions = [config.instructions || '', property(msg, config.instructionsProperty) || ''];
@@ -101,8 +108,10 @@ module.exports = function(RED) {
                 done();
             } catch (error) {
                 node.status({ fill: 'red', shape: 'ring', text: error.code || 'invalid input' });
-                node.error(publicError(error).message, msg);
-                done();
+                const safe = publicError(error);
+                msg.payload = null;
+                msg.hermes = { status: 'failed', error: safe };
+                done(new HermesError(safe.code, safe.message, safe));
             }
         });
     }
@@ -127,7 +136,7 @@ module.exports = function(RED) {
         if (!connection?.client || !queue) node.status({ fill: 'red', shape: 'ring', text: 'check configuration' });
         node.on('input', (msg, send, done) => {
             send = send || node.send.bind(node);
-            done = done || (() => {});
+            done = done || (error => { if (error) node.error(error, msg); });
             const original = clone(msg);
             let requestId;
             const fail = error => {
@@ -138,7 +147,11 @@ module.exports = function(RED) {
                     out.hermes = { requestId, status: safe.code === 'CANCELLED' ? 'cancelled' : 'failed', error: safe };
                     send([null, null, out]);
                     node.status({ fill: 'red', shape: 'ring', text: safe.code });
-                    node.error(safe.message, out);
+                    // done() is bound to this input message, not the cloned output.
+                    msg.payload = null;
+                    msg.hermes = out.hermes;
+                    done(new HermesError(safe.code, safe.message, safe));
+                    return;
                 }
                 done();
             };
@@ -179,7 +192,7 @@ module.exports = function(RED) {
         const queue = RED.nodes.getNode(config.queue)?.scheduler;
         node.on('input', async (msg, send, done) => {
             send = send || node.send.bind(node);
-            done = done || (() => {});
+            done = done || (error => { if (error) node.error(error, msg); });
             try {
                 if (!queue) throw new HermesError('CONFIG', 'Select a shared Hermes queue.');
                 const options = msg.hermesControl || {};
@@ -199,8 +212,9 @@ module.exports = function(RED) {
                 out.hermesControl = { ok: false, error: safe };
                 send([null, out]);
                 node.status({ fill: 'red', shape: 'ring', text: safe.code });
-                node.error(safe.message, out);
-                done();
+                msg.payload = null;
+                msg.hermesControl = out.hermesControl;
+                done(new HermesError(safe.code, safe.message, safe));
             }
         });
     }

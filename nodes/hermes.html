@@ -1,4 +1,5 @@
 <script type="text/javascript">
+'use strict';
 (function() {
     const numeric = (value, min, max) => RED.validators.number()(value) && Number(value) >= min && Number(value) <= max;
     RED.nodes.registerType('hermes-connection', {
@@ -19,18 +20,23 @@
             cooldown: { value: 0, validate: v => numeric(v, 0, 86400) },
             pollInterval: { value: 5, validate: v => numeric(v, 0.25, 300) },
             jobTimeout: { value: 1200, validate: v => numeric(v, 1, 86400) },
-            requestTimeout: { value: 30, validate: v => numeric(v, 1, 3600) },
+            asyncRequestTimeout: { value: undefined, validate: v => v === undefined || numeric(v, 1, 3600) },
+            requestTimeout: { value: undefined }, // legacy import compatibility
             stopTimeout: { value: 30, validate: v => numeric(v, 1, 300) },
             retryDelay: { value: 2, validate: v => numeric(v, 0.1, 300) },
             startRetries: { value: 2, validate: v => numeric(v, 0, 10) && Number.isInteger(Number(v)) }
         },
-        label: function() { return this.name || 'Shared Hermes FIFO'; }
+        label: function() { return this.name || 'Shared Hermes FIFO'; },
+        oneditprepare: function() {
+            $('#node-config-input-asyncRequestTimeout').val(this.asyncRequestTimeout ?? this.requestTimeout ?? 30);
+        },
+        oneditsave: function() { delete this.requestTimeout; }
     });
     RED.nodes.registerType('hermes-prepare', {
         category: 'Hermes', color: '#c8d8e8', icon: 'font-awesome/fa-pencil',
         defaults: {
             name: { value: '' }, inputProperty: { value: 'payload', required: true },
-            clientProperty: { value: '' }, authorIdProperty: { value: '' }, authorNameProperty: { value: '' },
+            clientProperty: { value: '' }, authorIdProperty: { value: '' }, authorNameProperty: { value: '' }, authorIsBotProperty: { value: '' },
             contextProperty: { value: '' }, instructionsProperty: { value: '' }, instructions: { value: '' }
         },
         inputs: 1, outputs: 1,
@@ -74,9 +80,13 @@
     <div class="form-tips">Use the selected profile's Hermes API_SERVER_KEY, not a model-provider key. A saved key takes precedence over the environment variable. Credentials are stored separately from exported flow JSON. Use HTTPS outside a trusted network.</div>
 </script>
 <script type="text/html" data-help-name="hermes-connection">
-    <p>Reusable, profile-scoped Hermes server connection. Multiple Agent nodes share this configuration and its credential.</p>
+<p>Reusable, profile-scoped Hermes server connection. Multiple Agent nodes share this configuration and its credential.</p>
+<h3>Details</h3>
+
     <p>Enter the server root (an optional reverse-proxy base path is supported). A trailing <code>/v1</code> is accepted. Do not include <code>/p/profile</code>: use Profile instead. Blank Profile uses <code>/v1</code>; a named profile uses <code>/p/name/v1</code>.</p>
-    <p>The API key is a Node-RED password credential and is excluded from ordinary editor exports. Alternatively, name a runtime environment variable. Message headers, URLs and credential overrides are never accepted. TLS verifies certificates by default; a TLS configuration can supply a custom CA.</p>
+    <p>The API key is a Node-RED password credential and is excluded from ordinary editor exports. Alternatively, name a runtime environment variable. Message headers, URLs and credential overrides are never accepted. TLS verifies certificates by default; a TLS configuration can supply a custom CA.</p><p>Connection HTTP timeout is the client default. Async queue operations use the separate Async HTTP wait, bounded by the run deadline; Sync waits up to the run deadline.</p>
+<h3>References</h3>
+<ul><li><a href="https://github.com/PhiKapJames/Node-red-Hermes-Agent">Package documentation</a></li><li><a href="https://github.com/NousResearch/hermes-agent/blob/v0.21.6/website/docs/user-guide/features/api-server.md">Hermes API contract</a></li></ul>
 </script>
 
 <script type="text/html" data-template-name="hermes-queue">
@@ -85,17 +95,21 @@
     <div class="form-row"><label for="node-config-input-cooldown">Start interval</label><input type="number" id="node-config-input-cooldown" min="0"> seconds</div>
     <div class="form-row"><label for="node-config-input-pollInterval">Poll interval</label><input type="number" id="node-config-input-pollInterval" step="0.25" min="0.25"> seconds</div>
     <div class="form-row"><label for="node-config-input-jobTimeout">Run deadline</label><input type="number" id="node-config-input-jobTimeout" min="1"> seconds</div>
-    <div class="form-row"><label for="node-config-input-requestTimeout">Async HTTP wait</label><input type="number" id="node-config-input-requestTimeout" min="1"> seconds</div>
+    <div class="form-row"><label for="node-config-input-asyncRequestTimeout">Async HTTP wait</label><input type="number" id="node-config-input-asyncRequestTimeout" min="1"> seconds</div>
     <div class="form-row"><label for="node-config-input-stopTimeout">Stop grace</label><input type="number" id="node-config-input-stopTimeout" min="1"> seconds</div>
     <div class="form-row"><label for="node-config-input-startRetries">Admission retries</label><input type="number" id="node-config-input-startRetries" min="0" max="10"></div>
     <div class="form-row"><label for="node-config-input-retryDelay">Retry delay</label><input type="number" id="node-config-input-retryDelay" min="0.1" step="0.1"> seconds</div>
     <div class="form-tips">One active job for all nodes using this queue, across flows and profiles. Queues are held in memory; pending jobs do not survive a Node-RED restart. Do not deploy during important active work.</div>
 </script>
 <script type="text/html" data-help-name="hermes-queue">
-    <p>A reusable global FIFO scheduler with one active job. Agent nodes sharing it are serialized even when they use different server connections. Use separate Queue configurations for independent concurrency groups.</p>
+<p>A reusable global FIFO scheduler with one active job. Agent nodes sharing it are serialized even when they use different server connections. Use separate Queue configurations for independent concurrency groups.</p>
+<h3>Details</h3>
+
     <p>Start interval is a minimum between start times, not an extra delay after completion. Queue capacity excludes the active job. Overflow raises <code>QUEUE_FULL</code>; it is never silently dropped.</p>
     <p>Unknown remote execution pauses the queue. <code>recover</code> attempts to confirm a known run has stopped. Force reset discards local tracking but can leave remote work running. Synchronous HTTP cancellation cannot prove server cancellation.</p>
-    <p>Version 0.1 uses in-memory tracking: restart/deploy does not replay pending jobs, and generated client sessions start fresh after restart. Use caller-managed session IDs for cross-restart conversations. Persistent Hindsight memory is not deleted.</p>
+    <p>Version 0.1 uses in-memory tracking: restart/deploy does not replay pending jobs, and generated client sessions start fresh after restart. Use caller-managed session IDs for cross-restart conversations. Persistent Hindsight memory is not deleted.</p><p>Async HTTP wait is stored as asyncRequestTimeout; legacy requestTimeout imports remain supported. It bounds each async admission or status call, not the total run time.</p>
+<h3>References</h3>
+<ul><li><a href="https://github.com/PhiKapJames/Node-red-Hermes-Agent">Package documentation</a></li><li><a href="https://github.com/NousResearch/hermes-agent/blob/v0.21.6/website/docs/user-guide/features/api-server.md">Hermes API contract</a></li></ul>
 </script>
 
 <script type="text/html" data-template-name="hermes-prepare">
@@ -104,14 +118,23 @@
     <div class="form-row"><label for="node-input-clientProperty">Client ID property</label><input type="text" id="node-input-clientProperty" placeholder="Optional msg property path"></div>
     <div class="form-row"><label for="node-input-authorIdProperty">Author ID property</label><input type="text" id="node-input-authorIdProperty"></div>
     <div class="form-row"><label for="node-input-authorNameProperty">Author name property</label><input type="text" id="node-input-authorNameProperty"></div>
+    <div class="form-row"><label for="node-input-authorIsBotProperty">Author bot flag</label><input type="text" id="node-input-authorIsBotProperty" placeholder="Optional boolean msg property"></div>
     <div class="form-row"><label for="node-input-contextProperty">Context property</label><input type="text" id="node-input-contextProperty"></div>
     <div class="form-row"><label for="node-input-instructionsProperty">Instructions property</label><input type="text" id="node-input-instructionsProperty"></div>
     <div class="form-row"><label for="node-input-instructions">Instructions</label><textarea id="node-input-instructions" rows="5" style="width:70%"></textarea></div>
     <div class="form-tips">Property paths are relative to msg (for example payload.text, not msg.payload.text). This node only maps fields; it does not filter channels, detect commands, truncate answers or authenticate users.</div>
 </script>
 <script type="text/html" data-help-name="hermes-prepare">
-    <p>Optional transport-independent mapper for upstream application adapters. Creates <code>msg.hermes.input</code>, <code>clientId</code>, <code>author</code>, <code>context</code> and <code>instructions</code> from chosen message properties. Original routing fields remain unchanged.</p>
-    <p>Map only context you deliberately want to send to the model. Never map an entire message containing credentials. Client ID is opaque; no application-specific format is required. Map control commands to a separate Control node in your own adapter.</p>
+<p>Optional transport-independent mapper for upstream application adapters. Creates <code>msg.hermes.input</code>, <code>clientId</code>, <code>author</code>, <code>context</code> and <code>instructions</code> from chosen message properties. Original routing fields remain unchanged.</p>
+<h3>Inputs</h3>
+<dl class="message-properties"><dt>payload <span class="property-type">string</span></dt><dd>Input text, or the configured input property.</dd><dt>hermes <span class="property-type">object</span></dt><dd>Optional existing request fields; mapped properties override only their corresponding fields.</dd></dl>
+<h3>Outputs</h3>
+<dl class="message-properties"><dt>hermes <span class="property-type">object</span></dt><dd>Mapped input, client identity, author, context and instructions. Other routing properties are preserved.</dd></dl>
+<h3>Details</h3>
+
+    <p>Map only context you deliberately want to send to the model. Never map an entire message containing credentials. Client ID is opaque; no application-specific format is required. Map control commands to a separate Control node in your own adapter.</p><p>Author bot flag maps a boolean property. With no bot-flag mapping, an existing author.is_bot value is preserved; new authors default to false. Attribution is not authorization.</p>
+<h3>References</h3>
+<ul><li><a href="https://github.com/PhiKapJames/Node-red-Hermes-Agent">Package documentation</a></li><li><a href="https://github.com/NousResearch/hermes-agent/blob/v0.21.6/website/docs/user-guide/features/api-server.md">Hermes API contract</a></li></ul>
 </script>
 
 <script type="text/html" data-template-name="hermes-agent">
@@ -124,14 +147,22 @@
     <div class="form-row"><label for="node-input-instructions">Instructions</label><textarea id="node-input-instructions" rows="5" style="width:70%"></textarea></div>
     <div class="form-row"><label style="width:auto"><input type="checkbox" id="node-input-includeContext" style="width:auto"> Include supplied author/context in model input</label></div>
     <div class="form-row"><label style="width:auto"><input type="checkbox" id="node-input-allowModelOverride" style="width:auto"> Allow msg.hermes.model to override model</label></div>
-    <div class="form-tips">Leave Model blank unless an explicit underlying model is required. The selected profile is not automatically a model ID. Final answer output contains full text; application-specific formatting belongs downstream.</div>
+    <div class="form-tips">Leave Model blank unless an explicit underlying model is required. The selected profile is not automatically a model ID. In Sync mode, a bare model override requires Hermes gateway.platforms.api_server.direct_model_requests: true (unless it matches a server-defined model route). Async Runs honors a supplied model. Final answer output contains full text; application-specific formatting belongs downstream.</div>
 </script>
 <script type="text/html" data-help-name="hermes-agent">
-    <p>Input: a prompt in <code>msg.payload</code> (or configured property). Optional <code>msg.hermes</code> fields: <code>input</code>, <code>clientId</code>, <code>sessionId</code>, <code>sessionKey</code>, <code>instructions</code>, <code>author</code>, <code>context</code>, <code>history</code>, <code>mode</code>, <code>model</code>.</p>
+<p>Input: a prompt in <code>msg.payload</code> (or configured property). Optional <code>msg.hermes</code> fields: <code>input</code>, <code>clientId</code>, <code>sessionId</code>, <code>sessionKey</code>, <code>instructions</code>, <code>author</code>, <code>context</code>, <code>history</code>, <code>mode</code>, <code>model</code>.</p>
+<h3>Inputs</h3>
+<dl class="message-properties"><dt>payload <span class="property-type">string</span></dt><dd>User prompt, unless overridden by msg.hermes.input or the input-property setting.</dd><dt>hermes <span class="property-type">object</span></dt><dd>Optional input, clientId, sessionId, sessionKey, author, context, instructions, history, mode and model.</dd></dl>
+<h3>Outputs</h3>
+<ol class="node-ports"><li>Final answer<dl class="message-properties"><dt>payload <span class="property-type">string</span></dt><dd>Complete, untruncated final answer.</dd><dt>hermes <span class="property-type">object</span></dt><dd>Status, request/run/session IDs, duration, usage and runtime metadata.</dd></dl></li><li>Lifecycle events<dl class="message-properties"><dt>payload <span class="property-type">null</span></dt><dd>Not an answer.</dd><dt>hermes <span class="property-type">object</span></dt><dd>State transitions and correlation IDs.</dd></dl></li><li>Errors<dl class="message-properties"><dt>payload <span class="property-type">null</span></dt><dd>No successful answer.</dd><dt>hermes.error <span class="property-type">object</span></dt><dd>Sanitized code, message, statusCode, retryable and remoteUnknown fields.</dd></dl></li></ol>
+<h3>Details</h3>
+
     <p>Async starts a run with an idempotency key and polls using short HTTP calls. Sync holds one Chat Completions HTTP request open until the response or deadline; Node-RED itself remains nonblocking. Sync is never automatically retried.</p>
     <p>Output 1: one successful final answer in <code>msg.payload</code> and result metadata in <code>msg.hermes</code>. Output 2: lifecycle events, payload null. Output 3: errors, payload null, detail in <code>msg.hermes.error</code>. Errors also reach a scoped Catch node. Do not join all outputs into an application response sender.</p>
     <p>Same client ID + connection + queue continues the same generated session during this runtime. Different clients do not share transcript history. An explicit sessionId is caller-managed and is not rewritten by queue reset. Shared memory-bank policy remains on Hermes.</p>
-    <p>Keys, raw HTTP headers, reasoning_content and tool arguments are not added to outputs. Existing unrelated input properties are preserved. No reply-length limit, radio policy or reset-word parsing is implemented.</p>
+    <p>Keys, raw HTTP headers, reasoning_content and tool arguments are not added to outputs. Existing unrelated input properties are preserved. No reply-length limit, radio policy or reset-word parsing is implemented.</p><p>Sync model overrides require gateway.platforms.api_server.direct_model_requests: true unless selecting a configured server model route. Async Runs honors the model field. This client does not enable that server setting or select a provider for you.</p><p>sessionKey is a stable memory-scope header used by Honcho independently of transcript IDs. Use distinct keys per client when separate Honcho scopes are intended; a shared key can share that scope. This does not itself partition a statically configured Hindsight bank or authenticate a sender.</p>
+<h3>References</h3>
+<ul><li><a href="https://github.com/PhiKapJames/Node-red-Hermes-Agent">Package documentation</a></li><li><a href="https://github.com/NousResearch/hermes-agent/blob/v0.21.6/website/docs/user-guide/features/api-server.md">Hermes API contract</a></li></ul>
 </script>
 
 <script type="text/html" data-template-name="hermes-control">
@@ -142,7 +173,15 @@
     <div class="form-tips">Reset affects all Agent nodes using this queue. It does not erase Hermes history or long-term memory. A force reset may leave remote work running; use only for deliberate recovery.</div>
 </script>
 <script type="text/html" data-help-name="hermes-control">
-    <p>Shared queue administration, separate from user prompts. Choose a fixed action or pass <code>msg.hermesControl.action</code>. This node never recognizes words in msg.payload as commands.</p>
+<p>Shared queue administration, separate from user prompts. Choose a fixed action or pass <code>msg.hermesControl.action</code>. This node never recognizes words in msg.payload as commands.</p>
+<h3>Inputs</h3>
+<dl class="message-properties"><dt>hermesControl <span class="property-type">object</span></dt><dd>For From message mode: action; optionally requestId or the explicitly enabled force flag.</dd></dl>
+<h3>Outputs</h3>
+<ol class="node-ports"><li>Control result<dl class="message-properties"><dt>payload <span class="property-type">object</span></dt><dd>Queue snapshot or action result.</dd><dt>hermesControl <span class="property-type">object</span></dt><dd>Action and ok: true.</dd></dl></li><li>Errors<dl class="message-properties"><dt>payload <span class="property-type">null</span></dt><dd>No successful control result.</dd><dt>hermesControl.error <span class="property-type">object</span></dt><dd>Sanitized error details.</dd></dl></li></ol>
+<h3>Details</h3>
+
     <p><code>reset</code> clears pending jobs, rotates generated sessions and requests active cancellation. <code>cancel</code> targets <code>msg.hermesControl.requestId</code> or the active job. <code>pause</code> blocks new starts but does not interrupt the active job. <code>resume</code> refuses uncertain execution until <code>recover</code> confirms termination or an explicitly enabled force reset releases local tracking.</p>
-    <p>Output 1 contains control result in msg.payload. Output 2 and Catch report errors. Authorization to send control messages is the upstream application's responsibility.</p>
+    <p>Output 1 contains control result in msg.payload. Output 2 and Catch report errors. Authorization to send control messages is the upstream application's responsibility.</p><p>Error output and a scoped Catch both report a failure; wire one notification path to avoid duplicate application alerts. A non-force reset retains the active slot until termination is confirmed, or pauses the queue if it cannot be confirmed.</p>
+<h3>References</h3>
+<ul><li><a href="https://github.com/PhiKapJames/Node-red-Hermes-Agent">Package documentation</a></li><li><a href="https://github.com/NousResearch/hermes-agent/blob/v0.21.6/website/docs/user-guide/features/api-server.md">Hermes API contract</a></li></ul>
 </script>
