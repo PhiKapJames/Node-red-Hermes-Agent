@@ -4,6 +4,8 @@
 
 It does **not** implement application-specific channel routing, sender formats, text-command detection, reply-length limits, sentence truncation, or delivery protocols. Put those policies in a separate upstream/downstream adapter.
 
+**For coding agents and automated Node-RED integrations:** start with [AGENTS.md](AGENTS.md), then follow the [agent integration runbook](docs/agent-integration.md) and the [importable example](examples/sync-and-async.json).
+
 ## Nodes
 
 | Node | Purpose |

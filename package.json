@@ -6,7 +6,7 @@
   "main": "nodes/hermes.js",
   "engines": { "node": ">=24.0.0" },
   "node-red": { "version": ">=5.0.0", "nodes": { "hermes-agent": "nodes/hermes.js" } },
-  "files": ["nodes/", "lib/", "examples/", "docs/", "README.md", "CHANGELOG.md", "LICENSE"],
+  "files": ["nodes/", "lib/", "examples/", "docs/", "AGENTS.md", "README.md", "CHANGELOG.md", "LICENSE"],
   "scripts": {
     "test": "node --test test/*.test.js",
     "test:integration": "node --test test/integration/*.test.js",
