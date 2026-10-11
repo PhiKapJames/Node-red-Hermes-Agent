@@ -1,36 +1,45 @@
-name: Prepare review tooling
+name: Validate review fixes
 on:
   push:
     branches: [chore/review-tooling-lockfile]
+    paths: ['.review/**', '.github/workflows/review-lockfile.yml', 'test/review.test.js', 'test/integration/review.test.js', 'scripts/lint.cjs', 'eslint.config.cjs']
 permissions:
-  contents: read
+  contents: write
+concurrency:
+  group: hermes-review-workbench
+  cancel-in-progress: true
 jobs:
-  prepare:
+  validate:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Export baseline review fixtures
+      - name: Apply agreed review changes
+        run: python3 .review/apply.py
+      - name: Generate exact development-tool lockfile without lifecycle scripts
+        run: npm install --package-lock-only --ignore-scripts
+      - run: npm ci --ignore-scripts
+      - run: npm run check
+      - run: npm test
+      - name: Install Node-RED test runtime
+        run: npm install --no-save --package-lock=false node-red@4 node-red-node-test-helper
+      - run: node --test test/integration/*.test.js
+      - run: npm pack
+      - name: Save only validated product changes and remove temporary tooling
         shell: bash
         run: |
-          node <<'JS'
-          const fs = require('node:fs');
-          const zlib = require('node:zlib');
-          const { execFileSync } = require('node:child_process');
-          const files = execFileSync('git', ['ls-files'], { encoding: 'utf8' }).trim().split('\n');
-          const groups = {
-            TESTS: files.filter(f => f.startsWith('test/')),
-            DOCS: files.filter(f => !f.startsWith('test/') && !f.startsWith('lib/') && f !== 'nodes/hermes.js' && f !== '.github/workflows/review-lockfile.yml')
-          };
-          for (const [name, paths] of Object.entries(groups)) {
-            const values = Object.fromEntries(paths.map(path => [path, fs.readFileSync(path, 'utf8')]));
-            console.log(name + '_GZIP_BASE64=' + zlib.gzipSync(JSON.stringify(values)).toString('base64'));
-          }
-          JS
-      - name: Generate exact dev-tool lockfile without lifecycle scripts
-        run: npm install --package-lock-only --ignore-scripts --save-dev --save-exact eslint@9.39.1 @eslint/js@9.39.1 globals@16.5.0
-      - name: Export lockfile
-        run: |
-          node -e "const fs=require('node:fs'),z=require('node:zlib'); console.log('LOCK_GZIP_BASE64='+z.gzipSync(fs.readFileSync('package-lock.json')).toString('base64'))"
+          git diff --check
+          git add -- nodes lib test docs scripts package.json package-lock.json README.md CHANGELOG.md eslint.config.cjs examples .github/workflows/test.yml
+          git rm -r -- .review .github/workflows/review-lockfile.yml
+          git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m 'fix: apply and validate agreed code review corrections'
+          git push origin HEAD:chore/review-tooling-lockfile
+          echo "VALIDATED_COMMIT=$(git rev-parse HEAD)"
+          echo "VALIDATED_TREE=$(git rev-parse 'HEAD^{tree}')"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: reviewed-hermes-package
+          path: '*.tgz'
+          if-no-files-found: error

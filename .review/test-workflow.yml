@@ -1,0 +1,39 @@
+name: Test and package
+on: [push, pull_request, workflow_dispatch]
+permissions:
+  contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - node: 22
+            runtime: 4
+          - node: 24
+            runtime: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - run: npm ci --ignore-scripts
+      - run: npm run check
+      - run: npm test
+      - name: Install isolated Node-RED integration-test dependencies
+        run: npm install --no-save --package-lock=false node-red@${{ matrix.runtime }} node-red-node-test-helper
+      - name: Test real Node-RED runtime against mock Hermes server
+        run: node --test test/integration/*.test.js
+      - run: npm pack
+        if: matrix.node == 22
+      - uses: actions/upload-artifact@v4
+        if: matrix.node == 22
+        with:
+          name: hermes-node-red-package
+          path: '*.tgz'
+          if-no-files-found: error
