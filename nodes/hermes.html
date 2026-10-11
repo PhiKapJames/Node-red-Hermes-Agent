@@ -20,7 +20,7 @@
             cooldown: { value: 0, validate: v => numeric(v, 0, 86400) },
             pollInterval: { value: 5, validate: v => numeric(v, 0.25, 300) },
             jobTimeout: { value: 1200, validate: v => numeric(v, 1, 86400) },
-            asyncRequestTimeout: { value: 30, validate: v => numeric(v, 1, 3600) }
+            asyncRequestTimeout: { value: 30, validate: v => numeric(v, 1, 3600) },
             stopTimeout: { value: 30, validate: v => numeric(v, 1, 300) },
             retryDelay: { value: 2, validate: v => numeric(v, 0.1, 300) },
             startRetries: { value: 2, validate: v => numeric(v, 0, 10) && Number.isInteger(Number(v)) }

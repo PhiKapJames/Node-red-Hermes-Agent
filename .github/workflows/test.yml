@@ -14,8 +14,8 @@ jobs:
       matrix:
         node: [22, 24]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: ${{ matrix.node }}
       - run: npm ci --ignore-scripts
@@ -27,7 +27,7 @@ jobs:
         run: node --test test/integration/*.test.js
       - run: npm pack
         if: matrix.node == 24
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: matrix.node == 24
         with:
           name: hermes-node-red-5-package

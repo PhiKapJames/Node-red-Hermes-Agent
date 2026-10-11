@@ -52,4 +52,7 @@ test('CI runs Node-RED 5 only on supported Node.js versions', () => {
     assert.match(yaml, /node:\s*\[22, 24\]/);
     assert.match(yaml, /node-red@5/);
     assert.doesNotMatch(yaml, /node-red@4|runtime:\s*4/);
+    for (const action of ['checkout', 'setup-node', 'upload-artifact']) {
+        assert.match(yaml, new RegExp(`actions/${action}@v7`));
+    }
 });
