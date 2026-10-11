@@ -29,8 +29,7 @@ module.exports = function(RED) {
             }
             node.client = new HermesClient({
                 baseUrl: config.baseUrl, profile: config.profile || '', getKey: node.readKey,
-                requestTimeoutMs: number(config.requestTimeout, 30, 1, 3600, 'HTTP timeout') * 1000,
-                tlsOptions
+                requestTimeoutMs: Math.round(number(config.requestTimeout, 30, 1, 3600, 'HTTP timeout') * 1000), tlsOptions
             });
         } catch (error) {
             node.configError = publicError(error, [node.readKey()]);
@@ -46,28 +45,27 @@ module.exports = function(RED) {
     function Queue(config) {
         RED.nodes.createNode(this, config);
         const node = this;
+        const ms = (value, fallback, min, max, name) => Math.round(number(value, fallback, min, max, name) * 1000);
         try {
             const maxPending = number(config.maxPending, 10, 0, 10000, 'Queue capacity');
             if (!Number.isInteger(maxPending)) throw new HermesError('CONFIG', 'Queue capacity must be an integer.');
             node.scheduler = new HermesQueue({
-                id: node.id,
-                clientFor: id => RED.nodes.getNode(id)?.client,
-                maxPending,
-                cooldownMs: number(config.cooldown, 0, 0, 86400, 'Cooldown') * 1000,
-                pollIntervalMs: number(config.pollInterval, 5, 0.25, 300, 'Poll interval') * 1000,
-                jobTimeoutMs: number(config.jobTimeout, 1200, 1, 86400, 'Run deadline') * 1000,
-                requestTimeoutMs: number(config.asyncRequestTimeout, 30, 1, 3600, 'Async HTTP timeout') * 1000,
-                stopTimeoutMs: number(config.stopTimeout, 30, 1, 300, 'Cancellation grace') * 1000,
-                retryDelayMs: number(config.retryDelay, 2, 0.1, 300, 'Retry delay') * 1000,
+                id: node.id, clientFor: id => RED.nodes.getNode(id)?.client, maxPending,
+                cooldownMs: ms(config.cooldown, 0, 0, 86400, 'Cooldown'),
+                pollIntervalMs: ms(config.pollInterval, 5, 0.25, 300, 'Poll interval'),
+                jobTimeoutMs: ms(config.jobTimeout, 1200, 1, 86400, 'Run deadline'),
+                requestTimeoutMs: ms(config.asyncRequestTimeout, 30, 1, 3600, 'Async HTTP timeout'),
+                stopTimeoutMs: ms(config.stopTimeout, 30, 1, 300, 'Cancellation grace'),
+                retryDelayMs: ms(config.retryDelay, 2, 0.1, 300, 'Retry delay'),
                 startRetries: Math.floor(number(config.startRetries, 2, 0, 10, 'Admission retries'))
             });
         } catch (error) { node.configError = publicError(error); node.error(node.configError.message); }
-        node.on('close', (_removed, done) => {
-            if (node.scheduler?.active) node.warn('Queue is stopping with active work; remote cancellation is best effort. Pending requests are not persisted.');
-            Promise.resolve()
-                .then(() => node.scheduler?.close())
-                .catch(error => node.warn(`Hermes queue shutdown: ${publicError(error).message}`))
-                .finally(done);
+        node.on('close', async (_removed, done) => {
+            try {
+                if (node.scheduler?.active) node.warn('Queue is stopping with active work; remote cancellation is best effort. Pending requests are not persisted.');
+                await node.scheduler?.close();
+            } catch (error) { node.warn(`Hermes queue shutdown: ${publicError(error).message}`); }
+            finally { done(); }
         });
     }
     RED.nodes.registerType('hermes-queue', Queue);
@@ -76,6 +74,7 @@ module.exports = function(RED) {
         RED.nodes.createNode(this, config);
         const node = this;
         node.on('input', (msg, send, done) => {
+            let failure;
             try {
                 if (msg.hermes !== undefined && !plainObject(msg.hermes)) throw new HermesError('INVALID_INPUT', 'Existing msg.hermes must be an object.');
                 const options = { ...(msg.hermes || {}) };
@@ -87,9 +86,7 @@ module.exports = function(RED) {
                     options.clientId = String(value);
                 }
                 if (config.authorIdProperty || config.authorNameProperty || config.authorIsBotProperty) {
-                    if (options.author !== undefined && !plainObject(options.author)) {
-                        throw new HermesError('INVALID_INPUT', 'Existing author must be an object.');
-                    }
+                    if (options.author !== undefined && !plainObject(options.author)) throw new HermesError('INVALID_INPUT', 'Existing author must be an object.');
                     const author = { ...(options.author || {}) };
                     if (config.authorIdProperty) author.id = property(msg, config.authorIdProperty);
                     if (config.authorNameProperty) author.name = property(msg, config.authorNameProperty);
@@ -107,14 +104,13 @@ module.exports = function(RED) {
                 msg.hermes = options;
                 node.status({ fill: 'green', shape: 'dot', text: 'prepared' });
                 send(msg);
-                done();
             } catch (error) {
-                node.status({ fill: 'red', shape: 'ring', text: error.code || 'invalid input' });
                 const safe = publicError(error);
                 msg.payload = null;
                 msg.hermes = { status: 'failed', error: safe };
-                done(new HermesError(safe.code, safe.message, safe));
-            }
+                node.status({ fill: 'red', shape: 'ring', text: safe.code });
+                failure = new HermesError(safe.code, safe.message, safe);
+            } finally { done(failure); }
         });
     }
     RED.nodes.registerType('hermes-prepare', Prepare);
@@ -125,7 +121,6 @@ module.exports = function(RED) {
         const connection = RED.nodes.getNode(config.connection);
         const queue = RED.nodes.getNode(config.queue)?.scheduler;
         let closed = false;
-        const secrets = () => [connection?.readKey?.() || ''];
         const progress = (job, event) => {
             if (closed || job.ownerId !== node.id) return;
             const output = clone(job.message);
@@ -136,26 +131,13 @@ module.exports = function(RED) {
         };
         queue?.on('progress', progress);
         if (!connection?.client || !queue) node.status({ fill: 'red', shape: 'ring', text: 'check configuration' });
-        node.on('input', (msg, send, done) => {
-            const original = clone(msg);
+        node.on('input', async (msg, send, done) => {
+            let original;
             let requestId;
-            const fail = error => {
-                if (!closed) {
-                    const safe = publicError(error, secrets());
-                    const out = clone(original);
-                    out.payload = null;
-                    out.hermes = { requestId, status: safe.code === 'CANCELLED' ? 'cancelled' : 'failed', error: safe };
-                    send([null, null, out]);
-                    node.status({ fill: 'red', shape: 'ring', text: safe.code });
-                    // done() is bound to this input message, not the cloned output.
-                    msg.payload = null;
-                    msg.hermes = out.hermes;
-                    done(new HermesError(safe.code, safe.message, safe));
-                    return;
-                }
-                done();
-            };
+            let failure;
             try {
+                if (closed) return;
+                original = clone(msg);
                 if (!connection?.client || !queue) throw new HermesError('CONFIG', 'Select a valid Hermes connection and shared queue.');
                 if (!connection.readKey()) throw new HermesError('MISSING_CREDENTIAL', 'Set the API key on the shared Hermes connection.');
                 const spec = prepareRequest(property(msg, config.inputProperty || 'payload'), msg.hermes || {}, {
@@ -164,24 +146,33 @@ module.exports = function(RED) {
                 });
                 const ticket = queue.enqueue({ ownerId: node.id, connectionId: config.connection, spec, message: original });
                 requestId = ticket.requestId;
-                ticket.finished.then(result => {
-                    if (!closed) {
-                        const out = clone(original);
-                        const { output, ...metadata } = result;
-                        out.payload = output;
-                        out.hermes = metadata;
-                        send([out, null, null]);
-                        node.status({ fill: 'green', shape: 'dot', text: 'completed' });
-                    }
-                    done();
-                }).catch(fail);
-            } catch (error) { fail(error); }
+                const { output, ...metadata } = await ticket.finished;
+                if (closed) return;
+                const out = clone(original);
+                out.payload = output;
+                out.hermes = metadata;
+                send([out, null, null]);
+                node.status({ fill: 'green', shape: 'dot', text: 'completed' });
+            } catch (error) {
+                if (closed) return;
+                const safe = publicError(error, [connection?.readKey?.() || '']);
+                const out = clone(original || { _msgid: msg._msgid });
+                out.payload = null;
+                out.hermes = { requestId, status: safe.code === 'CANCELLED' ? 'cancelled' : 'failed', error: safe };
+                send([null, null, out]);
+                node.status({ fill: 'red', shape: 'ring', text: safe.code });
+                // done(error) is correlated with the original input, not out.
+                msg.payload = null;
+                msg.hermes = out.hermes;
+                failure = new HermesError(safe.code, safe.message, safe);
+            } finally { done(failure); }
         });
         node.on('close', (_removed, done) => {
-            closed = true;
-            queue?.removeListener('progress', progress);
-            queue?.cancelOwner(node.id);
-            done();
+            try {
+                closed = true;
+                queue?.removeListener('progress', progress);
+                queue?.cancelOwner(node.id);
+            } finally { done(); }
         });
     }
     RED.nodes.registerType('hermes-agent', Agent);
@@ -190,20 +181,24 @@ module.exports = function(RED) {
         RED.nodes.createNode(this, config);
         const node = this;
         const queue = RED.nodes.getNode(config.queue)?.scheduler;
+        let closed = false;
         node.on('input', async (msg, send, done) => {
+            let failure;
             try {
+                if (closed) return;
                 if (!queue) throw new HermesError('CONFIG', 'Select a shared Hermes queue.');
                 const options = msg.hermesControl || {};
                 if (!plainObject(options)) throw new HermesError('INVALID_INPUT', 'hermesControl must be an object.');
                 const action = config.action === 'message' ? options.action : config.action || 'status';
                 if (options.force === true && config.allowForce !== true) throw new HermesError('OVERRIDE_DISABLED', 'Force reset is not enabled on this Control node.');
                 const result = await queue.control(action, { requestId: options.requestId, force: options.force === true });
+                if (closed) return;
                 msg.payload = result;
                 msg.hermesControl = { action, ok: true };
                 node.status({ fill: 'green', shape: 'dot', text: action });
                 send([msg, null]);
-                done();
             } catch (error) {
+                if (closed) return;
                 const safe = publicError(error);
                 const out = clone(msg);
                 out.payload = null;
@@ -212,9 +207,10 @@ module.exports = function(RED) {
                 node.status({ fill: 'red', shape: 'ring', text: safe.code });
                 msg.payload = null;
                 msg.hermesControl = out.hermesControl;
-                done(new HermesError(safe.code, safe.message, safe));
-            }
+                failure = new HermesError(safe.code, safe.message, safe);
+            } finally { done(failure); }
         });
+        node.on('close', (_removed, done) => { closed = true; done(); });
     }
     RED.nodes.registerType('hermes-control', Control);
 };

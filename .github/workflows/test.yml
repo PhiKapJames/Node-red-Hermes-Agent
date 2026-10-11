@@ -7,12 +7,13 @@ concurrency:
   cancel-in-progress: true
 jobs:
   test:
+    name: Node ${{ matrix.node }} / Node-RED 5
     runs-on: ubuntu-latest
     timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
-        node: [22, 24]
+        node: ['24.0.0', '24', '26']
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -21,15 +22,28 @@ jobs:
       - run: npm ci --ignore-scripts
       - run: npm run check
       - run: npm test
-      - name: Install Node-RED 5 integration-test dependencies
-        run: npm install --no-save --package-lock=false node-red@5 node-red-node-test-helper
-      - name: Test Node-RED 5 runtime against mock Hermes server
-        run: node --test test/integration/*.test.js
+        env:
+          NODE_OPTIONS: --throw-deprecation
+      - name: Install real Node-RED 5 without the deprecated test helper
+        run: npm install --no-save --package-lock=false --ignore-scripts node-red@5
+      - name: Verify removed test dependencies stay absent
+        run: |
+          node - <<'JS'
+          for (const name of ['node-red-node-test-helper', 'sinon', 'lodash.get', '@sinonjs/text-encoding']) {
+            try { require.resolve(name); throw new Error('Removed test dependency returned: ' + name); }
+            catch (error) { if (error.code !== 'MODULE_NOT_FOUND') throw error; }
+          }
+          console.log('Real Node-RED:', require('node-red/package.json').version);
+          JS
+      - name: Test actual Node-RED processes against mock Hermes
+        run: npm run test:integration
+        env:
+          NODE_OPTIONS: --throw-deprecation
       - run: npm pack
-        if: matrix.node == 24
+        if: matrix.node == '24'
       - uses: actions/upload-artifact@v7
-        if: matrix.node == 24
+        if: matrix.node == '24'
         with:
-          name: hermes-node-red-5-package
+          name: hermes-node24-package
           path: '*.tgz'
           if-no-files-found: error
