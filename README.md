@@ -33,7 +33,7 @@ Install the supplied `.tgz` in the Node-RED user directory, then restart Node-RE
 
 ```sh
 cd ~/.node-red
-npm install /path/to/node-red-contrib-hermes-agent-0.1.0.tgz
+npm install /path/to/node-red-contrib-hermes-agent-0.2.0.tgz
 ```
 
 Or install the repository directly after the review fixes are merged:
@@ -46,7 +46,15 @@ A deployment should pin a reviewed commit/tag rather than a moving branch. Node-
 
 For the Home Assistant Community Node-RED app, additional npm modules can be configured in its `npm_packages` list. Keep existing entries and add the reviewed GitHub package specification. Restart the app afterward. Runtime package installation is separate from importing the examples.
 
-Requires Node.js 18.17+ and Node-RED 4+. Use a currently supported Node.js LTS release. CI exercises Node.js 22 / Node-RED 4 and Node.js 24 / Node-RED 5. The Hermes protocol targets the v0.21.6 API contract; newer versions still need compatible endpoints. No runtime npm dependencies are required.
+Requires **Node-RED 5.0.0+** and **Node.js 22.9.0+**. Node.js 24 is recommended by the Node-RED maintainers. CI exercises Node-RED 5 on Node.js 22 and Node.js 24. The Hermes protocol targets the v0.21.6 API contract; newer versions still need compatible endpoints. No runtime npm dependencies are required.
+
+## Migration to 0.2.0 (Node-RED 5 and later)
+
+This is a **breaking** upgrade from the 0.1.x package. Upgrade the Node-RED runtime to 5.0.0+ and Node.js to 22.9.0+ before installing. Node.js 24 is recommended by the Node-RED team. Node-RED 4 and Node.js 18/20 are no longer supported. See the [official Node-RED 5 release requirements](https://nodered.org/blog/2026/06/09/version-5-0-released).
+
+The shared Queue config uses only **Async HTTP wait** (`asyncRequestTimeout`). Previous Queue configs that contain *only* the obsolete `requestTimeout` field now fall back to 30 seconds; explicitly set Async HTTP wait if you need another value. This does not change the Connection node's separate `requestTimeout` HTTP client default. Back up your flows and inspect existing Queue settings before enabling, and avoid a redeploy while an asynchronous Hermes run is active because queued state is in memory.
+
+The runtime now relies directly on Node-RED 5's guaranteed `input(msg, send, done)` and `close(removed, done)` callbacks, and uses native Node.js `Promise.withResolvers()` for queue completion. Existing API calls, credential protection, idempotent asynchronous admission, reset handling, and application-specific adapter separation remain in place. Node-RED 5's built-in Inject editor still uses its top-level `payload`/`payloadType` metadata in addition to typed `props[]`, so examples retain both representations rather than removing fields used by Node-RED itself.
 
 ## Quick start
 
@@ -129,7 +137,7 @@ Model is omitted by default on both APIs. A profile name is not assumed to be a 
 
 ## Queue and reset semantics
 
-One Queue configuration is one global FIFO and one active job. Different clients keep different transcripts while being globally serialized. Separate Queue configurations create separate concurrency groups. The optional minimum start interval defaults to zero and applies globally within that queue. **Async HTTP wait** (`asyncRequestTimeout`) bounds individual admission/status requests; **Run deadline** bounds the overall job. The Connection timeout is the client default; Sync uses the run deadline. Legacy Queue `requestTimeout` imports remain supported and migrate on editor save.
+One Queue configuration is one global FIFO and one active job. Different clients keep different transcripts while being globally serialized. Separate Queue configurations create separate concurrency groups. The optional minimum start interval defaults to zero and applies globally within that queue. **Async HTTP wait** (`asyncRequestTimeout`) bounds individual admission/status requests; **Run deadline** bounds the overall job. The Connection timeout is the client default; Sync uses the run deadline.
 
 Control messages go to a separate **Hermes Control** node:
 
@@ -161,7 +169,7 @@ The optional environment setting stores only a variable name in the exported flo
 
 Use HTTPS on untrusted networks. TLS verification is enabled by default, with optional Node-RED TLS config for a private CA. Redirects are rejected rather than forwarding bearer credentials. The package is an authenticated API client, not a sandbox for Hermes tools; tool permissions remain a Hermes-side responsibility. Author/client labels and input instructions are not authorization.
 
-## Known limits in 0.1.0
+## Known limits in 0.2.0
 
 **Queues and pending-job tracking are in memory.** A Node-RED restart or deployment that recreates these nodes does not resume polling or replay waiting jobs. Shutdown requests cancellation where possible, but a lost connection can leave remote work executing. Generated conversations start fresh after restart to avoid resurrecting a pre-reset session; applications requiring continuity must persist and supply their own `sessionId`.
 
@@ -169,7 +177,7 @@ There is no exactly-once delivery guarantee across process crashes. Durable job 
 
 ## Develop and test
 
-Development checks use ESLint 10 and require Node.js 22.13+ or Node.js 24+. The installed package has no runtime lint dependency.
+Development checks use ESLint 10 and require Node.js 22.13+; Node.js 24 is recommended for development and deployment. The installed package has no runtime lint dependency.
 
 ```sh
 npm ci
@@ -181,13 +189,15 @@ npm pack
 The fast suite uses Node's built-in test runner and localhost HTTP fixtures. `npm run check` includes syntax checks and ESLint for runtime code, tests, and the editor script embedded in `nodes/hermes.html`. ESLint is development-only; the package still has no runtime npm dependencies. For actual Node-RED runtime integration tests:
 
 ```sh
-npm install --no-save --package-lock=false node-red@4 node-red-node-test-helper
+npm install --no-save --package-lock=false node-red@5 node-red-node-test-helper
 node --test test/integration/node-red.test.js
 ```
 
-CI runs the fast suite and real Node-RED runtime tests against a mock Hermes server. Neither substitutes for a test against your own Hermes deployment. The package has no runtime dependencies and ships no credentials or application-specific adapters.
+CI runs the fast suite on Node.js 22/24 and Node-RED 5 runtime tests against a mock Hermes server. Neither substitutes for a test against your own Hermes deployment. The package has no runtime dependencies and ships no credentials or application-specific adapters.
 
 ## References
+
+- [Node-RED 5 and Node.js requirements](https://nodered.org/blog/2026/06/09/version-5-0-released)
 
 - [Node-RED credentials](https://nodered.org/docs/creating-nodes/credentials)
 - [Node-RED shared configuration nodes](https://nodered.org/docs/creating-nodes/config-nodes)
