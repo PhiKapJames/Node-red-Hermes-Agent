@@ -229,7 +229,7 @@ Supported actions: `status`, `pause`, `resume`, `clear`, `cancel`, `reset`, `rec
 
 **Control outputs:** port 1 has the action result in `msg.payload` and `msg.hermesControl = {action,ok:true}`; port 2 contains an error in `msg.hermesControl.error` with `msg.payload: null`. A scoped Catch also sees control failures.
 
-The queue's `status` snapshot provides `paused`, `closed`, `pending` (count), `active` (summary/null), `uncertain` (summary/null), `queued` (summaries), and `cooldownRemainingMs`. It intentionally excludes prompts and secrets.
+The queue's `status` snapshot provides `paused`, `closed`, `pending` (count), `active` (summary/null), `uncertain` (summary/null), `queued` (summaries), and `cooldownRemainingMs`. It intentionally excludes prompts and secrets. A retained uncertain job is reported as `uncertain.status: "uncertain"` for as long as the queue holds it, even though output 2 already emitted its terminal `failed` lifecycle event; a successful `recover` (or an explicit force reset) returns `uncertain: null`.
 
 ## 7. Security, limitations and failure diagnosis
 

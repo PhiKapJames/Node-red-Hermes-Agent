@@ -149,7 +149,7 @@ Configure Control to **From message**, or select a fixed action and send any mes
 - `reset`: clear the global queue, rotate generated sessions for all clients, request active cancellation, and discard stale final responses.
 - `recover`: attempt to confirm termination of a known but uncertain remote run.
 
-A stop endpoint returning `stopping` is **not** proof of cancellation. The package polls for a terminal state within the cancellation grace period. If admission or cancellation remains uncertain, the queue pauses rather than launching overlapping work.
+A stop endpoint returning `stopping` is **not** proof of cancellation. The package polls for a terminal state within the cancellation grace period. If admission or cancellation remains uncertain, the queue pauses rather than launching overlapping work, and `status` keeps reporting that retained job as `uncertain` until `recover` confirms termination or a force reset discards it.
 
 For deliberate emergency recovery, enable **Allow force** on Control and send `{action:"reset", force:true}`. This releases local tracking; **remote work may continue**. A late run ID is still stopped when obtainable and its final answer is discarded. Force reset is not a security boundary or a guarantee of remote cancellation.
 
