@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.0-beta.1 — Prerelease: queue status bounds and log-safe error messages
+
+First public prerelease; no earlier version was tagged or published. Since 0.3.0: the Queue `status` snapshot now keeps `pending` as the exact waiting count while `queued` is a bounded FIFO prefix of at most 50 summaries, with a new always-present `queuedTruncated` boolean; integrators must use `pending`, never `queued.length`, for backlog decisions. A retained uncertain job is reported as `uncertain.status: "uncertain"` for as long as the queue holds it. Redacted error messages now have every CR/LF run collapsed to one space, so an upstream error body cannot forge additional CR/LF-delimited Node-RED log entries and `msg.hermes.error.message` contains no CR or LF; tabs and Unicode separators are intentionally preserved. Adds the agent integration runbook (docs/agent-integration.md) and AGENTS.md. Node.js 24.0.0+ and Node-RED 5.0.0+ are required. Validation to date covers lint, unit tests, localhost HTTP fixtures, real isolated Node-RED 5 process tests and CI on Node 24.0.0/24/26; this prerelease has **not** been installed in a live Home Assistant/Node-RED deployment or exercised against a live Hermes Agent server, and must not be treated as production-ready.
+
 ## 0.3.0 — Node.js 24+ modernization
 
 Breaking: Node.js 24.0.0+ is now required alongside Node-RED 5+. Refactor native HTTP around async response streams and composed abort/deadline signals while retaining TLS and size limits. Use abortable promise timers for queue polling, cooldown and retry waits, simplify input/shutdown handlers with async/await, and cancel late known admissions on shutdown. Replace the deprecated Node-RED test helper with isolated embedded Node-RED process fixtures using node:test. CI covers the exact Node 24 floor, current 24.x and Node 26 forward compatibility. No runtime dependencies, credential changes, server-profile changes or radio-specific policy are added.

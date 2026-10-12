@@ -6,10 +6,10 @@ const path = require('node:path');
 const { HermesQueue } = require('../lib/queue');
 const read = file => fs.readFileSync(path.join(__dirname, '..', file), 'utf8');
 
-test('0.3.0 requires Node.js 24 and Node-RED 5 with synchronized lock metadata', () => {
+test('0.4.0-beta.1 requires Node.js 24 and Node-RED 5 with synchronized lock metadata', () => {
     const pkg = JSON.parse(read('package.json'));
     const lock = JSON.parse(read('package-lock.json'));
-    assert.equal(pkg.version, '0.3.0');
+    assert.equal(pkg.version, '0.4.0-beta.1');
     assert.equal(pkg['node-red'].version, '>=5.0.0');
     assert.equal(pkg.engines.node, '>=24.0.0');
     assert.equal(lock.version, pkg.version);
