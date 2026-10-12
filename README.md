@@ -142,7 +142,7 @@ return msg;
 
 Configure Control to **From message**, or select a fixed action and send any message. A phrase in a normal Agent prompt never triggers queue control.
 
-- `status`: summary of active and queued jobs without prompt text or credentials.
+- `status`: summary of active and queued jobs without prompt text or credentials. `pending` is always the true waiting count; `queued` is a bounded FIFO prefix (at most 50 entries) and `queuedTruncated` says whether entries were omitted.
 - `pause` / `resume`: block or resume new admissions; the active run is not paused.
 - `clear`: cancel waiting jobs without changing active work or sessions.
 - `cancel`: cancel the active job, or `requestId` for a particular waiting/active job.

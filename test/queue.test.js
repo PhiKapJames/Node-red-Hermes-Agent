@@ -62,6 +62,53 @@ test('queue overflow is explicit and not silently discarded', async t => {
     assert.equal(q.control('clear').cleared, 1);
     await assert.rejects(a.finished, { code: 'CANCELLED' });
 });
+const QUEUED_SUMMARY_CAP = 50; // the fixed bound in lib/queue.js, asserted as a contract
+test('status summaries are bounded while pending keeps the true waiting count', async t => {
+    const q = makeQueue(t, simpleClient(), { maxPending: 300 }); q.control('pause');
+    const ids = [];
+    for (let i = 0; i < QUEUED_SUMMARY_CAP; i++) ids.push(submit(q, `SECRET_PROMPT_${i}`).requestId);
+    const atCap = q.snapshot();
+    assert.equal(atCap.pending, QUEUED_SUMMARY_CAP);
+    assert.equal(atCap.queued.length, QUEUED_SUMMARY_CAP);
+    assert.equal(atCap.queuedTruncated, false, 'exactly at the bound omits nothing');
+    // Two waiting jobs past the bound: 51 and 52 exercise the flag on both sides.
+    const omitted = [submit(q, 'SECRET_PROMPT_50').requestId, submit(q, 'SECRET_PROMPT_51').requestId];
+    const snap = q.snapshot();
+    assert.equal(snap.pending, QUEUED_SUMMARY_CAP + 2, 'pending is the true total, not the returned length');
+    assert.equal(snap.queued.length, QUEUED_SUMMARY_CAP, 'the returned list never exceeds the bound');
+    assert.equal(snap.queuedTruncated, true);
+    assert.deepEqual(snap.queued.map(job => job.requestId), ids, 'summaries are the FIFO head in order');
+    assert.equal(snap.queued.some(job => omitted.includes(job.requestId)), false, 'the omitted tail is not reported');
+    assert.doesNotMatch(JSON.stringify(q.control('status')), /SECRET_PROMPT/, 'prompts never reach the payload');
+    assert.equal(q.control('status').queued.length, QUEUED_SUMMARY_CAP, 'the control payload uses the same bound');
+    // A job hidden by the bound stays cancellable, and the flag tracks the true count back down.
+    for (const [remaining, requestId] of [[QUEUED_SUMMARY_CAP + 1, omitted[1]], [QUEUED_SUMMARY_CAP, omitted[0]]]) {
+        assert.equal(q.control('cancel', { requestId }).cancelled, true, 'a job omitted from the projection is still addressable');
+        const after = q.snapshot();
+        assert.equal(after.pending, remaining);
+        assert.equal(after.queued.length, Math.min(remaining, QUEUED_SUMMARY_CAP));
+        assert.equal(after.queuedTruncated, remaining > QUEUED_SUMMARY_CAP);
+    }
+});
+test('small queues report every waiting job with truncation false', async t => {
+    const q = makeQueue(t, simpleClient()); q.control('pause');
+    const empty = q.snapshot();
+    assert.deepEqual(empty.queued, [], 'an empty queue still projects a list, not null');
+    assert.equal(empty.pending, 0);
+    assert.equal(empty.queuedTruncated, false, 'the flag is always present, including when nothing is queued');
+    const first = submit(q, 'a').requestId;
+    const one = q.snapshot();
+    assert.equal(one.pending, 1);
+    assert.deepEqual(one.queued.map(job => job.requestId), [first]);
+    assert.equal(one.queuedTruncated, false);
+    const rest = [submit(q, 'b'), submit(q, 'c')].map(ticket => ticket.requestId);
+    const ids = [first, ...rest];
+    const snap = q.snapshot();
+    assert.equal(snap.pending, 3);
+    assert.equal(snap.queued.length, 3);
+    assert.equal(snap.queuedTruncated, false);
+    assert.deepEqual(snap.queued.map(job => job.requestId), ids);
+});
 test('pause holds queued work; resume restarts it', async t => {
     let calls = 0; const client = simpleClient(); client.start = async () => { calls++; return { run_id: 'r' }; };
     const q = makeQueue(t, client); q.control('pause'); const a = submit(q, 'one');
