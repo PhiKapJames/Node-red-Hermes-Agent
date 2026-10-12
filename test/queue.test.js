@@ -105,9 +105,15 @@ test('terminal failure is surfaced with the actual error and queue continues', a
 });
 test('uncertain admission pauses the queue and requires deliberate recovery', async t => {
     const client = simpleClient(); client.start = async () => { throw new HermesError('NETWORK', 'lost', { retryable: true, remoteUnknown: true }); };
-    const q = makeQueue(t, client, { startRetries: 0 });
+    const q = makeQueue(t, client, { startRetries: 0 }); const states = [];
+    q.on('progress', (_, event) => states.push(event.status));
     await assert.rejects(submit(q, 'one').finished, { code: 'NETWORK' });
-    assert.equal(q.snapshot().paused, true); assert.ok(q.snapshot().uncertain);
+    const snapshot = q.snapshot();
+    assert.equal(snapshot.paused, true); assert.ok(snapshot.uncertain);
+    // The retained job is reported as uncertain even though its terminal event was failed.
+    assert.equal(snapshot.uncertain.status, 'uncertain'); assert.equal(snapshot.uncertain.runId, null);
+    assert.equal(snapshot.active, null);
+    assert.deepEqual(states, ['queued', 'starting', 'uncertain', 'failed']);
     assert.throws(() => q.control('resume'), { code: 'QUEUE_UNCERTAIN' });
     q.control('reset', { force: true }); assert.equal(q.snapshot().uncertain, null);
 });
@@ -134,13 +140,39 @@ test('owner undeploy removes only its queued jobs', async t => {
 test('unconfirmed stop blocks later jobs until recover confirms termination', async t => {
     let terminated = false; const client = simpleClient();
     client.status = async () => ({ status: terminated ? 'cancelled' : 'running' });
-    const q = makeQueue(t, client, { jobTimeoutMs:10, stopTimeoutMs:12 });
+    const q = makeQueue(t, client, { jobTimeoutMs:10, stopTimeoutMs:12 }); const states = [];
+    q.on('progress', (_, event) => states.push(event.status));
     await assert.rejects(submit(q, 'one').finished, error => error.code === 'JOB_TIMEOUT' && error.remoteUnknown);
     assert.equal(q.snapshot().paused, true);
+    const retained = q.snapshot().uncertain;
+    assert.equal(retained.status, 'uncertain'); assert.equal(retained.runId, 'run_1');
+    assert.equal(q.snapshot().active, null);
     assert.throws(() => submit(q, 'two'), { code:'QUEUE_UNCERTAIN' });
+    // Recovery that cannot confirm termination keeps the barrier and the uncertain status.
+    await assert.rejects(q.control('recover'), { code: 'QUEUE_UNCERTAIN' });
+    assert.equal(q.snapshot().uncertain.status, 'uncertain');
     terminated = true;
     const recovered = await q.control('recover');
     assert.equal(recovered.recovered, true); assert.equal(q.snapshot().uncertain, null);
+    assert.equal(q.snapshot().paused, false);
+    assert.ok(states.indexOf('uncertain') < states.indexOf('failed'), 'terminal failed event is still emitted');
+});
+test('only the retained uncertain job is reported as uncertain in a snapshot', async t => {
+    const client = simpleClient(); client.status = async () => ({ status: 'running' });
+    const q = makeQueue(t, client, { jobTimeoutMs: 40 });
+    q.control('pause'); submit(q, 'first'); submit(q, 'second'); q.control('resume');
+    await until(() => q.snapshot().queued.length === 1 && q.snapshot().active?.runId);
+    const before = q.snapshot();
+    assert.equal(before.uncertain, null);
+    assert.notEqual(before.active.status, 'uncertain');
+    assert.equal(before.queued[0].status, 'queued');
+    await until(() => q.snapshot().uncertain);
+    const after = q.snapshot();
+    assert.equal(after.uncertain.status, 'uncertain');
+    assert.equal(after.queued[0].status, 'queued', 'waiting work keeps its real phase');
+    assert.equal(q.control('status').uncertain.status, 'uncertain', 'the control result uses the same projection');
+    q.control('reset', { force: true });
+    assert.equal(q.snapshot().uncertain, null);
 });
 test('cancelling synchronous HTTP does not falsely claim the server stopped', async t => {
     let started = false; const client = simpleClient();
