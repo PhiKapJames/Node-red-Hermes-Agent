@@ -113,7 +113,7 @@ The module emits at most one successful final-answer message for a submitted job
 
 **Output 3 — errors:** `msg.hermes.error` includes a stable `code`, sanitized `message`, `statusCode`, `retryable` and `remoteUnknown`. `msg.payload` is null. Errors are passed to Node-RED through `done(error)` and also trigger a scoped Catch node; handle either output 3 or Catch to avoid duplicate application error notifications.
 
-Raw response bodies are intentionally not an output option. Error messages are bounded and redact the configured API key and recognizable bearer strings. This does not replace application-level protection against secrets appearing inside ordinary model-generated prose.
+Raw response bodies are intentionally not an output option. Error messages are bounded, redact the configured API key and recognizable bearer strings, and contain no CR or LF, so an upstream error body cannot forge additional CR/LF-delimited entries in the Node-RED log. This does not replace application-level protection against secrets appearing inside ordinary model-generated prose.
 
 ## Sync versus async
 

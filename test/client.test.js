@@ -51,6 +51,21 @@ test('401/403 failures are non-retryable and redact server-echoed credentials', 
         assert.doesNotMatch(error.message, /test-secret-credential/); return true;
     });
 });
+test('an upstream error body cannot forge log lines or survive redaction over real HTTP', async t => {
+    const client = await fixture(t, (_, res) => {
+        res.writeHead(500);
+        res.end(JSON.stringify({ error: { message: 'upstream says:\nERROR not authorized\r\ntoken test-secret-credential sk-abcdefghijklmnop' } }));
+    });
+    await assert.rejects(client.start({ input: 'x' }), error => {
+        assert.equal(error.code, 'HTTP_500');
+        // Redaction runs before the collapse, and the collapse before the cap, so a remote
+        // 500 body yields exactly one safe line for the Node-RED log and for Catch.
+        assert.equal(error.message, 'upstream says: ERROR not authorized token [REDACTED] [REDACTED]');
+        assert.doesNotMatch(error.message, /[\r\n]/);
+        assert.doesNotMatch(String(error), /test-secret-credential|sk-abcdef/);
+        return true;
+    });
+});
 test('missing key fails locally without starting a request', async () => {
     const client = new HermesClient({ baseUrl: 'http://127.0.0.1:1', getKey: () => '' });
     await assert.rejects(client.start({ input: 'x' }), { code: 'MISSING_CREDENTIAL' }); client.close();

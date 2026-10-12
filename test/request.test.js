@@ -2,7 +2,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { prepareRequest, sessionFor, bodyFor, resultFor } = require('../lib/request');
-const { publicError, HermesError } = require('../lib/errors');
+const { publicError, redact, HermesError } = require('../lib/errors');
 
 test('defaults omit model; profile names never become provider model names', () => {
     for (const mode of ['sync', 'async']) {
@@ -77,4 +77,31 @@ test('credential redaction removes configured tokens and bearer text', () => {
     const err = new HermesError('HTTP_401', 'Rejected secret-xyz; Bearer other-token; sk-test123456789');
     const safe = publicError(err, ['secret-xyz']);
     assert.doesNotMatch(JSON.stringify(safe), /secret-xyz|other-token|sk-test/);
+});
+test('CR and LF in untrusted upstream text cannot forge additional log lines', () => {
+    const safe = publicError(new HermesError('HTTP_500', 'upstream says:\nERROR not authorized\r\nsecond forged line'));
+    assert.doesNotMatch(safe.message, /[\r\n]/);
+    assert.equal(safe.message, 'upstream says: ERROR not authorized second forged line');
+    assert.equal(safe.code, 'HTTP_500');
+});
+test('lone CR and CRLF runs collapse to one space; existing control handling is unchanged', () => {
+    assert.equal(redact('a\nb'), 'a b');
+    assert.equal(redact('a\rb'), 'a b');
+    assert.equal(redact('a\r\n\r\n\r\nb'), 'a b');
+    assert.equal(redact('a\x0bb\x0cc\x00d'), 'abcd');
+    assert.equal(redact('a\n\tb'), 'a \tb');
+});
+test('ordinary single-line messages and tabs stay byte-for-byte unchanged', () => {
+    assert.equal(redact('Hermes returned HTTP 503.'), 'Hermes returned HTTP 503.');
+    assert.equal(redact('Run deadline exceeded; queue paused'), 'Run deadline exceeded; queue paused');
+    assert.equal(redact('columns\tstay\taligned'), 'columns\tstay\taligned');
+});
+test('secrets are removed before collapsing and the 600-character cap applies last', () => {
+    const safe = publicError(new HermesError('HTTP_401', 'echoed secret-xyz\nBearer abc.def\r\nsk-abcdefghijklmnop'), ['secret-xyz']);
+    assert.doesNotMatch(JSON.stringify(safe), /secret-xyz|abc\.def|sk-abc/);
+    assert.doesNotMatch(safe.message, /[\r\n]/);
+    assert.equal(redact(`start ${'a'.repeat(700)}`).length, 600);
+    const collapsed = redact(`start ${('\n' + 'b'.repeat(40)).repeat(40)}`);
+    assert.equal(collapsed.length, 600);
+    assert.doesNotMatch(collapsed, /[\r\n]/);
 });
