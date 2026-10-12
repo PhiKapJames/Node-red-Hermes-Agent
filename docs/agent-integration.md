@@ -238,6 +238,7 @@ The queue's `status` snapshot provides `paused`, `closed`, `pending` (count), `a
 - Dynamic `msg.url`/`msg.headers`/`msg.apiKey` are not recognized as Hermes Connection overrides. Treat the server URL and profile as trusted configuration, not per-message parameters.
 - Confirm the Hermes API server is reachable **from Node-RED** and is serving the chosen profile. A failing browser request from your laptop is not equivalent to Node-RED container connectivity.
 - HTTP redirects are rejected rather than forwarding bearer credentials. Input requests over 2 MiB and responses over 8 MiB fail. TLS certificate validation is enabled unless a trusted custom Node-RED TLS configuration is supplied.
+- Reported error text is redacted and every CR/LF run is collapsed to one space. An upstream error body therefore cannot forge additional CR/LF-delimited Node-RED log entries, and `msg.hermes.error.message` contains no CR or LF. Collapse happens after redaction and before the length cap, so neither can re-expose what redaction removed.
 - Queued jobs and tracking are **in memory**. Restart, redeploy, crash or network partition can lose tracking even if remote work continues; do not promise exactly-once work or response delivery.
 - Interactive approval submission, durable journaling, SSE streaming subscriptions, Hermes model-provider routing, tool permissions and memory-provider configuration are **not implemented by this package**.
 
