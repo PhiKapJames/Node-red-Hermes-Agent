@@ -169,6 +169,10 @@ job's approval is ever surfaced.
   so `lib/client.js` is transport only. Any new `lib/` file must be added to
   `package.json → scripts.check:syntax` in the same commit.
 
+## Task 4 — Approval control surface, editor, docs and examples
+
+*Increment: PR C, part 2 of 2.*
+
 ### 4.1 Control node `approve` action
 
 * **Carried from Task 2 (review, semantics to settle first):** a Control node currently still
@@ -235,6 +239,7 @@ job's approval is ever surfaced.
 6. Redaction and truncation still hold for an approval preview (opt-in, bounded, and
    credential-aware).
 7. Backoff never breaks existing 429 cancellation or the cancellation barrier.
+
 
 ## Task 5 — plan end marker (not a task)
 
