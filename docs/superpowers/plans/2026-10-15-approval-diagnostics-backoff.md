@@ -236,6 +236,11 @@ job's approval is ever surfaced.
    credential-aware).
 7. Backoff never breaks existing 429 cancellation or the cancellation barrier.
 
+## Task 5 — plan end marker (not a task)
+
+This heading exists only so that per-task brief extraction terminates at the last real task.
+There is no Task 5. Tasks 1-4 are the whole increment.
+
 ## Verification gates
 
 Every task: `npm run check && npm test`.
