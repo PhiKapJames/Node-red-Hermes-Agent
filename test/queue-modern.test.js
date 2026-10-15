@@ -156,3 +156,41 @@ test('late admission after shutdown is stopped and cannot produce a final answer
     await until(() => stops.length === 1);
     assert.deepEqual(stops, ['late']);
 });
+
+test('429 admission retries back off, so a later attempt waits longer than the one before', async t => {
+    const starts = [];
+    const retries = [];
+    const q = queue(t, {
+        start: async () => { starts.push(Date.now()); throw new HermesError('HTTP_429', 'at capacity', { statusCode: 429, retryable: true }); }
+    }, { retryDelayMs: 40, startRetries: 2 });
+    q.on('progress', (_job, event) => { if (event.status === 'retrying') retries.push(event); });
+    await assert.rejects(submit(q).finished, { code: 'HTTP_429' });
+    assert.equal(starts.length, 3, 'every scheduled admission attempt is made');
+    assert.deepEqual(retries.map(event => [event.operation, event.attempt, event.delayMs]),
+        [['start', 1, 40], ['start', 2, 80]], 'the lifecycle event reports the delay actually scheduled');
+    const waits = [starts[1] - starts[0], starts[2] - starts[1]];
+    assert.ok(waits[0] >= 40 && waits[1] >= 80, `scheduled waits were not honoured: ${waits}`);
+    assert.ok(waits[1] > waits[0], `the second wait (${waits[1]}ms) must exceed the first (${waits[0]}ms)`);
+});
+
+test('a retryable admission failure that is not 429 keeps the flat configured delay', async t => {
+    const retries = [];
+    const q = queue(t, {
+        start: async () => { throw new HermesError('HTTP_503', 'unavailable', { statusCode: 503, retryable: true }); }
+    }, { retryDelayMs: 20, startRetries: 2 });
+    q.on('progress', (_job, event) => { if (event.status === 'retrying') retries.push(event); });
+    await assert.rejects(submit(q).finished, { code: 'HTTP_503' });
+    assert.deepEqual(retries.map(event => event.delayMs), [20, 20], 'backoff is deliberately limited to 429');
+});
+
+test('a reset during a backoff wait does not sleep past the cancellation', async t => {
+    const q = queue(t, {
+        start: async () => { throw new HermesError('HTTP_429', 'at capacity', { statusCode: 429, retryable: true }); }
+    }, { retryDelayMs: 4000, startRetries: 2 });
+    const ticket = submit(q);
+    await until(() => q.active?.delayController);
+    const cancelledAt = Date.now();
+    q.reset();
+    await assert.rejects(ticket.finished, error => error.code === 'CANCELLED' && !error.remoteUnknown);
+    assert.ok(Date.now() - cancelledAt < 1000, 'the scheduled backoff must not outlive the reset');
+});
