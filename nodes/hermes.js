@@ -2,6 +2,7 @@
 
 const { HermesClient } = require('../lib/client');
 const { projectCapabilities, projectReadiness, approvalSupported } = require('../lib/diagnostics');
+const { approvalSubmission } = require('../lib/approval');
 const { HermesQueue } = require('../lib/queue');
 const { prepareRequest, plainObject } = require('../lib/request');
 const { HermesError, publicError } = require('../lib/errors');
@@ -186,14 +187,16 @@ module.exports = function(RED) {
     }
     RED.nodes.registerType('hermes-agent', Agent);
 
-    // Control actions that talk to Hermes use only the Connection chosen on this node: never
-    // anything from msg, and never the queue's. One Queue config can be referenced by several
-    // Connections, so a queue-derived client could send a diagnostic, or an approval, to the
-    // wrong server. Task 4 reuses this one lookup for the approval action.
-    function trustedConnection(config) {
-        const connection = config.connection ? RED.nodes.getNode(config.connection) : null;
+    // Control actions that talk to Hermes resolve their client here and nowhere else. A probe uses
+    // the Connection chosen on this node; an approval uses the Connection the job was actually
+    // admitted on, because one Queue config can be referenced by several Connections and answering a
+    // decision on somebody else's server is exactly the failure this prevents. Neither ever reads a
+    // Connection out of the message, and an approval never reads one out of this node's own field.
+    function trustedConnection(connectionId) {
+        const connection = connectionId ? RED.nodes.getNode(connectionId) : null;
         // The editor restricts the field to a Hermes Connection; this is the runtime gate that
-        // keeps a hand-edited flow from pointing an action at another node type's client.
+        // keeps a hand-edited flow from pointing an action at another node type's client. For an
+        // approval the id comes from the queue's own job, which only this package ever wrote.
         if (!connection || connection.type !== 'hermes-connection' || !connection.client) {
             throw new HermesError('CONFIG', 'Select a valid Hermes connection for this action.');
         }
@@ -208,6 +211,9 @@ module.exports = function(RED) {
         // Connection, so a message can neither select it nor choose a server. It is also the only
         // action that does not consult the queue scheduler at all.
         const probing = config.action === 'probe';
+        // Answering a decision is likewise only ever the node's own fixed action: a message supplies
+        // the two IDs that address one, never the permission to send one.
+        const approving = config.action === 'approve';
         const probeTarget = probing && PROBE_TARGETS.has(config.target) ? config.target : undefined;
         // `msg.hermes.probe` is the machine-readable conclusion. A capabilities probe that did
         // not complete reports approval support as unsupported; readiness never claims it.
@@ -228,25 +234,65 @@ module.exports = function(RED) {
                 const options = msg.hermesControl || {};
                 if (!plainObject(options)) throw new HermesError('INVALID_INPUT', 'hermesControl must be an object.');
                 const action = config.action === 'message' ? options.action : config.action || 'status';
-                if (options.force === true && config.allowForce !== true) throw new HermesError('OVERRIDE_DISABLED', 'Force reset is not enabled on this Control node.');
+                // `force` is the reset action's override and nothing else: it is consulted for that
+                // action alone, so a stray `force: true` on a dashboard button is neither rejected as
+                // though it had attempted a reset nor allowed to become an override for anything else.
+                const force = action === 'reset' && options.force === true;
+                if (force && config.allowForce !== true) throw new HermesError('OVERRIDE_DISABLED', 'Force reset is not enabled on this Control node.');
                 if (probing) {
                     // Fail closed before any network call: an unknown target never picks a route.
                     if (!probeTarget) throw new HermesError('CONFIG', 'Choose a probe target: capabilities or readiness.');
-                    const connection = trustedConnection(config);
+                    const connection = trustedConnection(config.connection);
                     secrets = [connection.readKey?.() || ''];
                     const data = probeTarget === 'capabilities'
                         ? await connection.client.capabilities()
                         : await connection.client.healthDetailed();
                     if (closed) return;
                     const out = clone(msg);
-                    out.payload = probeTarget === 'capabilities' ? projectCapabilities(data) : projectReadiness(data);
+                    // The projection is the only place an upstream diagnostic becomes a message, so
+                    // this node's own key is named as a secret before any of it is summarised.
+                    const summary = probeTarget === 'capabilities'
+                        ? projectCapabilities(data, { secrets })
+                        : projectReadiness(data, { secrets });
+                    out.payload = summary;
                     out.hermes = { ...callerRequest(out), probe: probeOutcome(true, data) };
                     out.hermesControl = { action: 'probe', ok: true, target: probeTarget };
                     node.status({ fill: 'green', shape: 'dot', text: `probed ${probeTarget}` });
                     send([out, null]);
                     return;
                 }
-                const result = await queue.control(action, { requestId: options.requestId, force: options.force === true });
+                if (approving) {
+                    // Every rule about which decision may be answered, and with what, is decided in
+                    // lib/approval.js before a client is resolved at all: a refusal cannot reach the
+                    // network, and nothing that was refused is echoed into a message or a status.
+                    const target = approvalSubmission({
+                        allowApprove: config.allowApprove,
+                        choices: config.approvalChoices,
+                        control: options,
+                        job: queue.activeJob(options.requestId)
+                    });
+                    if (closed) return;
+                    // The Connection that was admitted for this job, taken from the job: never from
+                    // this node's Connection field, which belongs to the probe action alone.
+                    const connection = trustedConnection(target.connectionId);
+                    secrets = [connection.readKey?.() || ''];
+                    await connection.client.approve(target.runId, { choice: target.choice, requestId: target.approvalRequestId });
+                    if (closed) return;
+                    // An approval is not a completion, and this is the whole of its effect: the queue is
+                    // not touched, the run keeps its slot, and polling goes on until it is terminal. The
+                    // server's acknowledgement body is deliberately not forwarded - a 2xx already means
+                    // it resolved that decision, and nothing it echoes belongs on a flow message.
+                    const out = clone(msg);
+                    out.payload = {
+                        action: 'approve', ok: true, requestId: target.requestId, runId: target.runId,
+                        approvalRequestId: target.approvalRequestId, choice: target.choice
+                    };
+                    out.hermesControl = { action: 'approve', ok: true };
+                    node.status({ fill: 'green', shape: 'dot', text: 'approved' });
+                    send([out, null]);
+                    return;
+                }
+                const result = await queue.control(action, { requestId: options.requestId, force });
                 if (closed) return;
                 msg.payload = result;
                 msg.hermesControl = { action, ok: true };
