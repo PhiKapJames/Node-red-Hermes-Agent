@@ -1,6 +1,7 @@
 'use strict';
 
-const { HermesClient, projectCapabilities, projectReadiness, approvalSupported } = require('../lib/client');
+const { HermesClient } = require('../lib/client');
+const { projectCapabilities, projectReadiness, approvalSupported } = require('../lib/diagnostics');
 const { HermesQueue } = require('../lib/queue');
 const { prepareRequest, plainObject } = require('../lib/request');
 const { HermesError, publicError } = require('../lib/errors');

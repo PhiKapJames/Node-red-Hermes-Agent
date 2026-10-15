@@ -1,7 +1,7 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { projectCapabilities, projectReadiness, approvalSupported } = require('../lib/client');
+const { projectCapabilities, projectReadiness, approvalSupported } = require('../lib/diagnostics');
 const capabilitiesFixture = require('./support/fixtures/capabilities.json');
 const healthFixture = require('./support/fixtures/health-detailed.json');
 
