@@ -77,6 +77,31 @@ test('cancel after ambiguous admission still resolves the idempotent run before 
     assert.deepEqual(stopped, ['existing-run']);
 });
 
+test('cancel of the active run by requestId holds the slot until remote termination is confirmed', async t => {
+    let terminal = false;
+    let stopped = false;
+    const starts = [];
+    const q = queue(t, {
+        start: async body => { starts.push(body.input); return { run_id: body.input }; },
+        status: async id => ({ status: id === 'old' ? (terminal ? 'cancelled' : 'running') : 'completed', output: 'Done.' }),
+        stop: async () => { stopped = true; return { status: 'stopping' }; }
+    }, { pollIntervalMs: 10000 });
+    const old = submit(q, 'old');
+    await until(() => q.active?.delayController);
+    const result = q.control('cancel', { requestId: old.requestId });
+    assert.deepEqual(result, { action: 'cancel', cancellationRequested: true, requestId: old.requestId }, 'cancelling the active run is a request, not an immediate release');
+    const next = submit(q, 'new');
+    await until(() => stopped);
+    assert.deepEqual(starts, ['old'], 'follow-up work is not admitted during the barrier');
+    assert.equal(q.snapshot().active.runId, 'old', 'the slot stays reserved');
+    assert.equal(q.snapshot().pending, 1);
+    terminal = true;
+    await assert.rejects(old.finished, error => error.code === 'CANCELLED' && !error.remoteUnknown);
+    assert.equal((await next.finished).output, 'Done.');
+    assert.deepEqual(starts, ['old', 'new']);
+    assert.equal(q.snapshot().uncertain, null);
+});
+
 test('pause aborts a scheduled cooldown and resume admits exactly once', async t => {
     let calls = 0;
     const q = queue(t, {
