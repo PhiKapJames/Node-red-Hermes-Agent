@@ -64,7 +64,9 @@ module.exports = function(RED) {
                 requestTimeoutMs: ms(config.asyncRequestTimeout, 30, 1, 3600, 'Async HTTP timeout'),
                 stopTimeoutMs: ms(config.stopTimeout, 30, 1, 300, 'Cancellation grace'),
                 retryDelayMs: ms(config.retryDelay, 2, 0.1, 300, 'Retry delay'),
-                startRetries: Math.floor(number(config.startRetries, 2, 0, 10, 'Admission retries'))
+                startRetries: Math.floor(number(config.startRetries, 2, 0, 10, 'Admission retries')),
+                // Set by the Queue configuration alone; a message can never ask for approval text.
+                includeApprovalPreview: config.includeApprovalPreview === true
             });
         } catch (error) { node.configError = publicError(error); node.error(node.configError.message); }
         node.on('close', async (_removed, done) => {

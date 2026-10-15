@@ -12,7 +12,7 @@
     "test:integration": "node --test test/integration/*.test.js",
     "check": "npm run check:syntax && npm run lint",
     "prepack": "npm run check:syntax && npm test",
-    "check:syntax": "node --check nodes/hermes.js && node --check lib/client.js && node --check lib/diagnostics.js && node --check lib/queue.js && node --check lib/request.js && node --check lib/retry.js && node --check lib/errors.js",
+    "check:syntax": "node --check nodes/hermes.js && node --check lib/client.js && node --check lib/approval.js && node --check lib/diagnostics.js && node --check lib/queue.js && node --check lib/request.js && node --check lib/retry.js && node --check lib/errors.js",
     "lint": "node scripts/lint.cjs"
   },
   "keywords": ["node-red", "hermes-agent", "nousresearch", "agents", "async", "queue", "node-red-5"],

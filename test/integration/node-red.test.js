@@ -6,16 +6,26 @@ const { setTimeout: delay } = require('node:timers/promises');
 const { startRuntime } = require('../support/runtime.cjs');
 const capabilitiesFixture = require('../support/fixtures/capabilities.json');
 const healthFixture = require('../support/fixtures/health-detailed.json');
+const approvalRunFixture = require('../support/fixtures/run-waiting-approval.json');
+const approvalFixtures = require('../support/fixtures/approval.json');
 
 async function setup(t, target, options = {}) {
     const calls = [];
+    let runPolls = 0;
     const api = http.createServer(async (req, res) => {
         const chunks = [];
         for await (const chunk of req) chunks.push(chunk);
         const body = chunks.length ? JSON.parse(Buffer.concat(chunks)) : null;
         calls.push({ url: req.url, method: req.method, headers: req.headers, body });
         res.setHeader('Content-Type', 'application/json');
-        if (options.errorCode !== undefined) {
+        if (req.url.endsWith('/approval')) {
+            // Nothing in this package may answer a decision, so any approval POST is a finding. The
+            // server's real answer to one that is not pending is returned so a caller cannot read a
+            // 2xx it never got.
+            res.writeHead(409);
+            res.end(JSON.stringify(approvalFixtures.notActive.body));
+        }
+        else if (options.errorCode !== undefined) {
             // The verified upstream envelope is {error:{message,type,param,code}}.
             res.writeHead(400);
             res.end(JSON.stringify({ error: { message: 'Fixture rejected the run.', type: 'invalid_request_error', param: null, code: options.errorCode } }));
@@ -31,6 +41,11 @@ async function setup(t, target, options = {}) {
         else if (options.denied) { res.writeHead(403); res.end(JSON.stringify({ error: { message: 'Rejected fixture-only-key' } })); }
         else if (req.url.endsWith('/chat/completions')) res.end(JSON.stringify({ choices: [{ message: { content: 'Full answer.', reasoning_content: 'PRIVATE_REASONING' }, finish_reason: 'stop' }] }));
         else if (req.method === 'POST' && req.url.endsWith('/runs')) { res.statusCode = 202; res.end(JSON.stringify({ run_id: `run-${calls.length}`, status: 'started' })); }
+        else if (options.pendingApproval && req.method === 'GET' && /\/runs\/[^/]+$/.test(req.url)) {
+            // The first poll carries the approval object exactly as the server does; the next one
+            // finishes the run, so the waiting state is observable without any local waiting.
+            res.end(JSON.stringify(++runPolls === 1 ? approvalRunFixture : { status: 'completed', output: 'Full answer.' }));
+        }
         else res.end(JSON.stringify({ status: 'completed', output: 'Full answer.', reasoning_content: 'PRIVATE_REASONING' }));
     });
     await new Promise(resolve => api.listen(0, '127.0.0.1', resolve));
@@ -282,3 +297,50 @@ for (const [code, expected] of [['approval_not_pending', 'approval_not_pending']
         assert.equal((await runtime.next('caught')).hermes.error.errorCode, expected);
     });
 }
+
+test('real Node-RED 5: a pending decision is observable and is never answered by this package', { timeout: 30000 }, async t => {
+    const { runtime, calls } = await setup(t, { type: 'hermes-agent', mode: 'async', wires: [['out'], ['events'], ['errors']] }, { pendingApproval: true });
+    // The message asks for a preview it must not be able to ask for: `msg.hermes` cannot enable
+    // anything that a Queue configuration has not enabled.
+    runtime.send({ _msgid: 'awaiting-approval', payload: 'Hello', hermes: { clientId: 'client-A', includeApprovalPreview: true } });
+    const answer = await runtime.next('out');
+    assert.equal(answer.payload, 'Full answer.');
+    assert.equal(answer.hermes.status, 'completed');
+    const lifecycle = runtime.messages('events').map(message => message.hermes);
+    const pendingMessages = runtime.messages('events').filter(message => message.hermes?.status === 'waiting_for_approval');
+    assert.equal(pendingMessages.length, 1, JSON.stringify(lifecycle.map(hermes => hermes.status)));
+    assert.equal(pendingMessages[0].payload, null, 'a lifecycle message carries no answer');
+    assert.equal(pendingMessages[0]._msgid, 'awaiting-approval', 'the decision is correlated with the request that caused it');
+    const pending = pendingMessages[0].hermes;
+    assert.equal(pending.approvalRequestId, approvalRunFixture.approval.request_id);
+    assert.deepEqual(pending.approvalChoices, ['once', 'session', 'always', 'deny']);
+    assert.equal(pending.clientId, 'client-A');
+    assert.equal(pending.requestId, lifecycle.find(hermes => hermes.status === 'completed')?.requestId, 'one job, one decision');
+    assert.equal(Object.hasOwn(pending, 'approvalCommand'), false, 'the preview stays off unless the Queue says so');
+    assert.doesNotMatch(JSON.stringify(runtime.messages('events')), /echo|flagged action requires approval|mock-destructive-pattern|msg_mock_0001|fixture-only-key/);
+    assert.deepEqual(calls.filter(call => call.url.endsWith('/approval')), [], 'this package never answers a decision');
+    await delay(40);
+    assert.equal(runtime.messages('out').length, 1);
+    assert.equal(runtime.messages('errors').length, 0);
+    assert.equal(runtime.messages('caught').length, 0);
+});
+
+test('real Node-RED 5: the Queue preview setting alone puts bounded approval text on the lifecycle port', { timeout: 30000 }, async t => {
+    const { runtime, calls } = await setup(t, { type: 'hermes-agent', mode: 'async', wires: [['out'], ['events'], ['errors']] }, {
+        pendingApproval: true, queue: { includeApprovalPreview: true }
+    });
+    runtime.send({ _msgid: 'preview-on', payload: 'Hello' });
+    assert.equal((await runtime.next('out')).payload, 'Full answer.');
+    const pending = runtime.messages('events').map(message => message.hermes).filter(hermes => hermes.status === 'waiting_for_approval');
+    assert.equal(pending.length, 1);
+    // The server already redacts the command; this package re-redacts and caps, and reads only
+    // these two fields out of the approval object.
+    assert.equal(pending[0].approvalCommand, 'echo [redacted-by-hermes]');
+    assert.equal(pending[0].approvalDescription, 'flagged action requires approval');
+    assert.deepEqual(pending[0].approvalChoices, ['once', 'session', 'always', 'deny']);
+    assert.doesNotMatch(JSON.stringify(runtime.messages('events')), /mock-destructive-pattern|msg_mock_0001|smart_denied|allow_session|allow_permanent|fixture-only-key/);
+    assert.deepEqual(calls.filter(call => call.url.endsWith('/approval')), []);
+    const queue = await runtime.inspectQueue();
+    assert.deepEqual({ paused: queue.paused, pending: queue.pending, active: queue.active, uncertain: queue.uncertain },
+        { paused: false, pending: 0, active: null, uncertain: null }, 'observing a decision never disturbs the queue');
+});
