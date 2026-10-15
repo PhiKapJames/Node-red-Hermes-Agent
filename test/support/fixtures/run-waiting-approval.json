@@ -1,0 +1,22 @@
+{
+  "object": "hermes.run",
+  "run_id": "run_mock_0001",
+  "status": "waiting_for_approval",
+  "created_at": 1730000000.0,
+  "updated_at": 1730000001.5,
+  "last_event": "approval.request",
+  "approval": {
+    "command": "echo [redacted-by-hermes]",
+    "description": "flagged action requires approval",
+    "pattern_key": "mock-destructive-pattern",
+    "smart_denied": false,
+    "allow_session": true,
+    "allow_permanent": true,
+    "request_id": "0f1e2d3c4b5a69788796a5b4c3d2e1f0",
+    "message_id": "msg_mock_0001",
+    "event": "approval.request",
+    "run_id": "run_mock_0001",
+    "timestamp": 1730000001.5,
+    "choices": ["once", "session", "always", "deny"]
+  }
+}
