@@ -157,12 +157,26 @@ job's approval is ever surfaced.
   `once|session|always|deny`; `request_id` is **required**.
 * Validate locally before dispatch; never send a `request_id` derived from `msg` without the
   caller supplying it.
-
-## Task 4 — Approval control surface, editor, docs and examples
-
-*Increment: PR C, part 2 of 2.*
+* **Carried from Task 2 (review):** `request()`'s `fromRoot` option is currently
+  caller-settable (`capabilities({ fromRoot: true })` would flip the URL scope), and the
+  comment in `lib/client.js` claims a caller can never supply a URL. Make that invariant real
+  as part of this task — either make the root-scoped path a private helper or strip
+  `fromRoot` from incoming `options` in the public methods — and make `approve()` use the
+  profile `/v1` scope without exposing a scope switch. Correct the comment to match whatever
+  the code actually guarantees.
+* **Carried from Task 2 (review, structure):** `lib/client.js` grew ~78 lines of projection
+  code. Once `approve()` lands, extract the diagnostics projection into `lib/diagnostics.js`
+  so `lib/client.js` is transport only. Any new `lib/` file must be added to
+  `package.json → scripts.check:syntax` in the same commit.
 
 ### 4.1 Control node `approve` action
+
+* **Carried from Task 2 (review, semantics to settle first):** a Control node currently still
+  requires a Queue config, and `msg.hermesControl.force === true` is rejected with
+  `OVERRIDE_DISABLED` even for `probe`, while the palette help says the Probe action "ignores
+  it". Decide the semantics **once**, here, for both `probe` and `approve`, and make the help
+  true. Do not relax `queue.required` — a control node that cannot report or act on the queue's
+  job has no way to enforce the exact-decision rule.
 
 * `hermes-control` gains `allowApprove` (default **false**), `approvalChoices` (the choices
   this node may ever send, default none) and optional `includeApprovalPreview` (default
@@ -186,6 +200,20 @@ job's approval is ever surfaced.
   retries grow exponentially from it, that growth is capped at 60 s, and that every wait is
   clamped to the remaining run deadline. Document the additive `delayMs` field on the
   `retrying` lifecycle event wherever lifecycle fields are listed.
+* **Carried from Task 2 (review finding, must not be dropped):** `README.md`, the "Supported
+  actions" list in `docs/agent-integration.md` and the `hermes-control` row of the
+  `AGENTS.md` contract cheat-sheet all omit the new `probe` action, and nothing fails when they
+  diverge. Update all three, then extend `test/agent-docs.test.js` so the documented action
+  list is asserted against the actions `lib/queue.js` and the Control node actually accept —
+  a doc list that can silently drift is not a contract.
+* **Carried from Task 2 (review finding):** the probe summary strings are redacted without the
+  Connection key (`redact(value)` with no `secrets`), unlike the transport error path. Thread an
+  optional `secrets` argument from the Control node into the projection so a server that echoes
+  its own received key in `status` or `version` cannot surface it.
+* **Carried from Task 2 (review finding):** `flag()` reports an absent upstream boolean as
+  `false`, which contradicts the module's own "absent fields are omitted" principle and can read
+  as a server assertion that a feature is off. Either distinguish the two or add an explicit
+  comment and help-text note that a missing flag is reported as unsupported/`false`.
 * `nodes/hermes.html`: `allowApprove`, `approvalChoices`, `includeApprovalPreview`,
   `connection`, `probe`/`target` fields with safe defaults, plus help text stating the
   approval round trip is a *separate* message and that only the currently pending decision
