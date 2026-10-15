@@ -21,20 +21,20 @@ This file is for coding agents working in this repository **and** agents integra
 4. Provide prompt text as `msg.payload` (string), a configured input property, or `msg.hermes.input`. Do not send entire untrusted HTTP/MQTT/application event objects as prompts.
 5. Use validated, application-assigned `msg.hermes.clientId` for per-client generated conversations. A display name is not a secure identity. `sessionId` is a **caller-managed** transcript ID; `sessionKey` can establish a Honcho memory scope but does not partition a shared Hindsight bank or authenticate a sender.
 6. Treat the Agent's **first output only** as a completed answer. Output 2 is lifecycle metadata (`payload: null`); output 3 is a sanitized error (`payload: null`). A scoped Catch also sees failures: avoid double-delivering errors from both Catch and output 3.
-7. Keep queue control on a separate `hermes-control` node. Dynamic `msg.hermesControl.action` is enabled by the node setting `action: "message"`; **never** wire an untrusted input directly to that node. Prompts never implicitly execute reset.
+7. Keep queue control on a separate `hermes-control` node. Dynamic `msg.hermesControl.action` is enabled by the node setting `action: "message"`; **never** wire an untrusted input directly to that node. `probe` and `approve` are fixed-only and are never chosen by message. Prompts never implicitly execute reset.
 8. Do not silently truncate or split the Hermes answer inside this module. Downstream adapters enforce any destination-specific limits, and must handle answers that do not fit.
 9. Do not bypass the established cancellation barrier: after an ordinary reset/cancel, the active slot remains reserved until termination is confirmed or the queue pauses as uncertain. A force reset is explicit, opt-in and can leave remote work running.
-10. Do not claim durable queues, exactly-once delivery, persistent generated sessions, automatic approval submission, or automatic Hindsight memory isolation. Tracking and pending jobs live in process memory.
+10. Do not claim durable queues, exactly-once delivery, persistent generated sessions, automatic approval submission, or automatic Hindsight memory isolation. Tracking and pending jobs live in process memory. Approval **relay** exists (`approve`): it needs `allowApprove: true` plus explicit `approvalChoices`, addresses one decision by both IDs or fails locally, and never frees the queue slot. `session`/`always` grants persist server-side and are not revocable from Node-RED.
 
 ## Contract cheat sheet
 
 | Component | Inputs or configuration | Outputs / role |
 | --- | --- | --- |
 | `hermes-connection` (config) | `baseUrl`, `profile`, `apiKeyEnv`, `tls`, `requestTimeout`; protected `apiKey` | Shared API client and credentials |
-| `hermes-queue` (config) | `maxPending`, `cooldown`, `pollInterval`, `jobTimeout`, `asyncRequestTimeout`, `stopTimeout`, `retryDelay`, `startRetries` | One active job and bounded pending FIFO |
+| `hermes-queue` (config) | `maxPending`, `cooldown`, `pollInterval`, `jobTimeout`, `asyncRequestTimeout`, `stopTimeout`, `retryDelay`, `startRetries`, `includeApprovalPreview` | One active job and bounded pending FIFO |
 | `hermes-prepare` | Mapped input/client/author/context/instructions properties | One normal output; validation failures via `done(error)` / Catch |
 | `hermes-agent` | `connection` ID, `queue` ID, `mode` (`async`, `sync` or `message`), `inputProperty`, `instructions`, `model`, `includeContext`, `allowModelOverride` | 1: final text; 2: lifecycle; 3: errors |
-| `hermes-control` | `queue` ID, `action` (`status`, `pause`, `resume`, `clear`, `cancel`, `reset`, `recover` or `message`), `allowForce` | 1: result; 2: error |
+| `hermes-control` | `queue` ID, `action` (`status`, `pause`, `resume`, `clear`, `cancel`, `reset`, `recover`, `probe`, `approve` or `message`), `allowForce`, `connection` + `target` (probe), `allowApprove` + `approvalChoices` (approve) | 1: result; 2: error |
 
 Full field validation, session rules, exact flow JSON, and operational runbook: [docs/agent-integration.md](docs/agent-integration.md).
 

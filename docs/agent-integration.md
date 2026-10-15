@@ -2,7 +2,7 @@
 
 This guide describes how to install **`node-red-contrib-hermes-agent`** into Node-RED and build a working, transport-neutral application flow. Follow [../AGENTS.md](../AGENTS.md) for contributor safety rules, [../README.md](../README.md) for the human overview, and [../examples/sync-and-async.json](../examples/sync-and-async.json) for **importable flow JSON**.
 
-The code that defines the authoritative contract is `nodes/hermes.js`, `nodes/hermes.html`, `lib/request.js`, `lib/client.js` and `lib/queue.js`. If behavior changes, update this document alongside the code.
+The code that defines the authoritative contract is `nodes/hermes.js`, `nodes/hermes.html`, `lib/request.js`, `lib/client.js`, `lib/queue.js`, `lib/approval.js`, `lib/diagnostics.js`, `lib/retry.js` and `lib/errors.js`. If behavior changes, update this document alongside the code.
 
 ## 1. Prerequisites, installation and discovery
 
@@ -79,7 +79,8 @@ A representative export-safe connection config (NOT a secret):
   "asyncRequestTimeout": 30,
   "stopTimeout": 30,
   "retryDelay": 2,
-  "startRetries": 2
+  "startRetries": 2,
+  "includeApprovalPreview": false
 }
 ~~~
 
@@ -93,8 +94,9 @@ All numeric values above are **seconds** except `maxPending` and `startRetries` 
 | `jobTimeout` | 1200 s | Total time budget for a job |
 | `asyncRequestTimeout` | 30 s | Single async HTTP admission/poll request limit |
 | `stopTimeout` | 30 s | Grace for confirming remote cancellation |
-| `retryDelay` | 2 s | Delay between eligible retries |
+| `retryDelay` | 2 s | **Base** delay before an eligible async admission retry. Retries after an HTTP 429 grow exponentially from it (2 s, 4 s, 8 s, ...); growth is capped at 60 s and every wait is additionally clamped to the run deadline remaining. Other retryable admission failures repeat the base delay. The computed wait appears as `delayMs` on the `retrying` lifecycle event. |
 | `startRetries` | 2 | Maximum admission retries |
+| `includeApprovalPreview` | false | Opt-in: put bounded, credential-redacted `approvalCommand`/`approvalDescription` text on the `waiting_for_approval` lifecycle event. Off by default and never enabled by a message. |
 
 **One queue config ID** means one active Hermes job plus a bounded FIFO across every Agent node that references it, even across tabs and Hermes profiles. Two queue configs allow independent active work. A queue is **in memory** and is **not** durable across Node-RED restart/redeployment.
 
@@ -195,7 +197,7 @@ All paths are beneath the configured `/v1` or `/p/<profile>/v1` prefix. The modu
 | Port | `msg.payload` | `msg.hermes` | Delivery handling |
 | --- | --- | --- | --- |
 | **1** | Complete string answer | `status: "completed"`; `requestId`, `mode`, optional `runId`, `sessionId`, `clientId`, `durationMs`, `usage`, `runtime` | Send to destination formatter |
-| **2** | `null` | Lifecycle statuses such as `queued`, `starting`, `accepted`, `running`, `retrying`, `waiting_for_approval`, `stopping`, `completed`, `cancelled`, `failed`, `uncertain` | Log/monitor; **never** send as a second answer |
+| **2** | `null` | Lifecycle statuses such as `queued`, `starting`, `accepted`, `running`, `retrying`, `waiting_for_approval`, `stopping`, `completed`, `cancelled`, `failed`, `uncertain`. A `retrying` admission event adds `operation`, `attempt` and `delayMs`. `waiting_for_approval` adds `approvalRequestId` (omitted when unusable) and `approvalChoices`; with the Queue's `includeApprovalPreview` it also adds bounded redacted `approvalCommand`/`approvalDescription` | Log/monitor; **never** send as a second answer |
 | **3** | `null` | `status`, `requestId`, `error: {code,message,statusCode,retryable,remoteUnknown}` | Error policy; do not treat as success |
 
 Unrelated routing properties on the input `msg` are retained in these outputs. The error is additionally reported to a scoped Node-RED **Catch** through `done(error)`; choose **one user-facing error-delivery path** rather than double-notifying from output 3 and Catch.
@@ -219,14 +221,56 @@ msg.hermesControl = { action: "reset" };
 return msg;
 ~~~
 
-Supported actions: `status`, `pause`, `resume`, `clear`, `cancel`, `reset`, `recover`. `cancel` optionally accepts `requestId` for a queued/active job. Force is only available if the Control node has `allowForce: true` and `msg.hermesControl.force === true`. Prefer to keep that setting disabled.
+Supported actions: `status`, `pause`, `resume`, `clear`, `cancel`, `reset`, `recover`, `probe`, `approve`. `cancel` optionally accepts `requestId` for a queued/active job. `probe` and `approve` are **fixed-only**: they can be selected only in the node configuration, and `msg.hermesControl.action: "probe"` or `"approve"` is rejected with `INVALID_ACTION`. Force is only the `reset` action's override: it requires `allowForce: true` and `msg.hermesControl.force === true`, and every other action ignores a stray `force`. Prefer to keep that setting disabled.
 
 - `pause` blocks new starts but does not interrupt active work; `resume` refuses a queue that still has uncertain remote work.
 - `clear` cancels waiting jobs only.
 - `cancel` of the active run, with or without its `requestId`, returns `cancellationRequested: true` and, like `reset`, **keeps the active slot** until remote termination is verified or the queue stops as uncertain. Cancelling a queued job by ID returns `cancelled: true` immediately.
 - `reset` clears pending work, rotates generated client sessions and requests cancellation of the active run. A normal reset **keeps the active slot** until remote termination is verified or the queue stops as uncertain.
 - `recover` attempts to confirm remote termination for a known uncertain run. An unknown run ID may require an operator to inspect Hermes outside Node-RED.
+- `probe` reads `GET /v1/capabilities` or `GET /health/detailed` once through the Connection selected on the Control node and outputs a bounded summary of booleans, clamped numbers and short single-line strings; nested upstream maps are never copied. It reads nothing from and writes nothing to the queue, so a failed probe never pauses it: it reports `hermes.probe.stale: true` and, for capabilities, `approvalSupported: false`. A feature flag the server does not report is reported as unsupported, never as support.
+- `approve` relays exactly one human decision for exactly one pending approval, as described below.
 - Force reset abandons local tracking and can permit overlapping remote work. Do not present it as confirmation of cancellation.
+
+### Answering a pending approval (the `approve` action)
+
+A run that stops to ask permission reports `waiting_for_approval` on Agent output 2 with `approvalRequestId` (the server decision ID, omitted if unusable) and `approvalChoices` (the decisions the server advertised for it). This package never answers a decision on its own. Relaying one decision is a separate message to a Control node configured like this:
+
+~~~json
+{
+  "id": "example-approval-control",
+  "type": "hermes-control",
+  "z": "your-tab-id",
+  "name": "Answer approval",
+  "queue": "example-hermes-queue",
+  "action": "approve",
+  "allowForce": false,
+  "allowApprove": true,
+  "approvalChoices": "once,deny",
+  "x": 550,
+  "y": 520,
+  "wires": [["result-node-id"], ["error-node-id"]]
+}
+~~~
+
+~~~js
+// After application-specific authorization of the human decision:
+msg.hermesControl = {
+    requestId: "<requestId from the lifecycle event>",
+    approvalRequestId: "<approvalRequestId from the same event>",
+    choice: "once"
+};
+return msg;
+~~~
+
+The rules are exact, and every refusal happens locally with **zero HTTP requests**:
+
+- Both `requestId` (the queue job) and `approvalRequestId` (the server decision) are required. Nothing defaults to "the active job" or "the pending decision", so a stale dashboard click cannot answer a newer decision; the queue rejects anything that is not the decision pending right now for that job.
+- `choice` must be one of the four server literals (`once`, `session`, `always`, `deny`), be listed in this node's `approvalChoices`, **and** be in the server-advertised `choices` for that decision. `allowApprove` must be true on the node; both approval settings default to no, so upgrades and imports of older flows never enable approvals.
+- The POST goes to the Connection that was admitted for that job, never to the Control node's `connection` field (which belongs to `probe`), and never to a URL taken from the message.
+- A successful POST does **not** free the queue slot and is never replayed; the run keeps polling until terminal, so a lost acknowledgement can neither release the slot early nor double-answer.
+- Accepted staleness race: the decision may be answered elsewhere (or the run may finish) between the last poll and this POST. The correct outcome is then the server's 409, surfaced on the error output with `errorCode: approval_not_pending` or `approval_not_active` - not a local error, never a retry, and the run and queue are undisturbed.
+- A `session` or `always` grant persists server-side on Hermes, where its own allowlists live, and is **not revocable from Node-RED**. This package only relays the choice.
 
 **Control outputs:** port 1 has the action result in `msg.payload` and `msg.hermesControl = {action,ok:true}`; port 2 contains an error in `msg.hermesControl.error` with `msg.payload: null`. A scoped Catch also sees control failures.
 
@@ -241,7 +285,7 @@ The queue's `status` snapshot provides `paused`, `closed`, `pending` (the true w
 - HTTP redirects are rejected rather than forwarding bearer credentials. Input requests over 2 MiB and responses over 8 MiB fail. TLS certificate validation is enabled unless a trusted custom Node-RED TLS configuration is supplied.
 - Reported error text is redacted and every CR/LF run is collapsed to one space. An upstream error body therefore cannot forge additional CR/LF-delimited Node-RED log entries, and `msg.hermes.error.message` contains no CR or LF. Collapse happens after redaction and before the length cap, so neither can re-expose what redaction removed.
 - Queued jobs and tracking are **in memory**. Restart, redeploy, crash or network partition can lose tracking even if remote work continues; do not promise exactly-once work or response delivery.
-- Interactive approval submission, durable journaling, SSE streaming subscriptions, Hermes model-provider routing, tool permissions and memory-provider configuration are **not implemented by this package**.
+- Durable job journaling, SSE streaming subscriptions, Hermes model-provider routing, tool permissions and memory-provider configuration are **not implemented by this package**. Approval waiting is observable, and the `approve` action relays one explicitly authorized human decision as described above; nothing chooses or submits a decision automatically, and `session`/`always` grants are not revocable from Node-RED.
 
 | Symptom / code | Check or response |
 | --- | --- |
@@ -249,7 +293,8 @@ The queue's `status` snapshot provides `paused`, `closed`, `pending` (the true w
 | `MISSING_CREDENTIAL` / 401 / 403 | Check saved Connection password or `apiKeyEnv` in runtime, matching Hermes profile and server API-server key |
 | 404 from Hermes | Verify base URL, reverse-proxy path, profile and Hermes API version; no duplicate `/p/name` or `/v1` |
 | `INVALID_INPUT` | Confirm prompt is text, property path is correct, mapped bot flag is boolean and size/JSON limits are satisfied |
-| `OVERRIDE_DISABLED` | Per-message model override is disabled; remove `msg.hermes.model` or explicitly enable and validate it |
+| `OVERRIDE_DISABLED` | Per-message model override is disabled; or approval answering is not enabled on this Control node, or the choice is not permitted/advertised. Remove `msg.hermes.model`, or configure `allowApprove` plus explicit `approvalChoices` deliberately |
+| `approval_not_pending` / `approval_not_active` on Control output 2 | Accepted staleness race: that decision was already resolved elsewhere. The 409 is the correct outcome - it was not retried, and the run and queue are undisturbed |
 | `QUEUE_FULL` | Shared queue waiting capacity reached; application should retry later or apply backpressure |
 | `HTTP_TIMEOUT` / `NETWORK` | Verify connectivity, configured deadlines and server state; an async admission may have started remotely |
 | `QUEUE_UNCERTAIN` | Stop accepting new work, inspect Hermes run state, use `recover` if safe; avoid indiscriminate force reset |
@@ -269,6 +314,7 @@ The queue's `status` snapshot provides `paused`, `closed`, `pending` (the true w
 - [ ] Session continuity checked with repeated authenticated client ID and isolation checked with a second client.
 - [ ] Async and sync happy paths tested against a reachable Hermes endpoint (if authorized).
 - [ ] Authorization for Control actions enforced; cancellation/reset tested without force.
+- [ ] If approvals are answered at all: a dedicated Control node with `allowApprove: true` and explicit `approvalChoices`, both IDs relayed from the lifecycle event, and the 409 staleness outcome handled as normal operation.
 - [ ] Empty/invalid prompts, credential failure, queue overflow, run timeout and uncertain work produce safe outcomes.
 - [ ] No secrets in exports, git history or logged model-visible context.
 - [ ] State explicitly whether tests used a real Hermes server, a mock, or a static code review. Do not call a mocked response a live integration test.
@@ -286,6 +332,10 @@ The queue's `status` snapshot provides `paused`, `closed`, `pending` (the true w
 | `lib/request.js` | Validated request shape, generated sessions, model/author/context handling |
 | `lib/client.js` | API URLs, HTTP(S), TLS, timeout/abort, body limits and credential safety |
 | `lib/queue.js` | Global FIFO-per-queue, idempotent admission, cancellation and recovery |
+| `lib/approval.js` | Pending-decision projection, preview redaction and the exact approval-submission rule |
+| `lib/diagnostics.js` | Bounded capability/readiness probe summaries |
+| `lib/retry.js` | Async admission retry wait growth (base, exponential on 429, cap, deadline clamp) |
+| `lib/errors.js` | `HermesError`, redaction choke point and public error shape |
 | `test/` | Unit and actual Node-RED 5 process integration tests |
 | `.github/workflows/test.yml` | CI across supported Node.js and Node-RED runtime combinations |
 
