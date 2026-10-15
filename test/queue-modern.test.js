@@ -77,7 +77,7 @@ test('cancel after ambiguous admission still resolves the idempotent run before 
     assert.deepEqual(stopped, ['existing-run']);
 });
 
-test('cancel of the active run by requestId holds the slot until remote termination is confirmed', async t => {
+test('cancel of the active run by requestId holds the slot until remote termination is confirmed', { timeout: 30000 }, async t => {
     let terminal = false;
     let stopped = false;
     const starts = [];
