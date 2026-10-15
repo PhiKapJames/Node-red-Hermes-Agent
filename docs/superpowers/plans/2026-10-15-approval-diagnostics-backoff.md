@@ -63,9 +63,9 @@ Gate answers:
 If any later task needs a shape that is not in the contract note, **stop and raise it**
 instead of guessing.
 
-## PR A — `improve/async-admission-backoff`
+## Task 1 — Bounded backoff for admission retries
 
-### A1 Bounded backoff for admission retries
+*Increment: PR A (`improve/async-admission-backoff`).*
 
 New `lib/retry.js` exporting exactly:
 
@@ -98,9 +98,12 @@ cases (429 vs other status, ceiling, `remainingMs` clamp, non-integer/NaN inputs
 the first while `test/queue-modern.test.js`'s existing 429 cancellation behaviour does **not**
 regress.
 
-## PR B — `feat/server-diagnostics`
+## Task 2 — Server diagnostics: probes and the `probe` control action
 
-### B1 Client probes
+*Increment: PR B (`feat/server-diagnostics`). The client transport work and the Control
+surface are one reviewable unit: the projection is only testable through the action.*
+
+### 2.1 Client probes
 
 `lib/client.js`:
 
@@ -115,7 +118,7 @@ regress.
   dropped. `lib/errors.js` gains `errorCode` in `HermesError` and `publicError` (validated
   again on the way out).
 
-### B2 `probe` action on Hermes Control
+### 2.2 `probe` action on Hermes Control
 
 * New Control action `probe` with `target` of `capabilities` | `readiness`.
 * A queue config can be referenced by **multiple** connection configs, so the probe needs an
@@ -133,9 +136,12 @@ regress.
   `run_approval` (a missing flag means "unsupported", never "assume supported").
 * `msg.hermes.probe.stale` is informational only; a failed probe never pauses the queue.
 
-## PR C — `feat/run-approval-control`
+## Task 3 — Approval plumbing: client method and approval-identity detection
 
-### C1 Detect an approval decision that needs an answer
+*Increment: PR C (`feat/run-approval-control`), part 1 of 2. Deliberately split from the
+Control surface: this task is the concurrency-sensitive half and needs its own review.*
+
+### 3.1 Detect an approval decision that needs an answer
 
 `lib/queue.js` polling already tolerates `waiting_for_approval`. Add change detection that
 compares the **approval identity**, not just the status string: track the last
@@ -144,11 +150,20 @@ while the status string is unchanged. Emit `approvalRequestId` (and, when a
 `hermes-control` opts in, a preview) on the lifecycle event. Only the queue's own active
 job's approval is ever surfaced.
 
-### C2 Submit an exact decision
+### 3.2 Client method for an exact decision
 
 * `HermesClient.approve(runId, { choice, requestId }, options)` → `POST
   /runs/{runId}/approval` with body `{ choice, request_id }`. `choice` must be one of
   `once|session|always|deny`; `request_id` is **required**.
+* Validate locally before dispatch; never send a `request_id` derived from `msg` without the
+  caller supplying it.
+
+## Task 4 — Approval control surface, editor, docs and examples
+
+*Increment: PR C, part 2 of 2.*
+
+### 4.1 Control node `approve` action
+
 * `hermes-control` gains `allowApprove` (default **false**), `approvalChoices` (the choices
   this node may ever send, default none) and optional `includeApprovalPreview` (default
   **false**). Approval requires **both** `msg.hermesControl.requestId` (the queue job) and
@@ -163,8 +178,14 @@ job's approval is ever surfaced.
   lost acknowledgement can neither replay an approval nor release the slot early. On a
   retryable failure the POST is **not** blindly replayed.
 
-### C3 Editor, docs, examples
+### 4.2 Editor, docs, examples
 
+* **Carried from Task 1 (review finding, must not be dropped):** the `retryDelay` row in
+  `docs/agent-integration.md` still reads "Delay between eligible retries", which the Task 1
+  backoff made wrong. Rewrite it to state that it is the *base* delay, that HTTP 429 admission
+  retries grow exponentially from it, that growth is capped at 60 s, and that every wait is
+  clamped to the remaining run deadline. Document the additive `delayMs` field on the
+  `retrying` lifecycle event wherever lifecycle fields are listed.
 * `nodes/hermes.html`: `allowApprove`, `approvalChoices`, `includeApprovalPreview`,
   `connection`, `probe`/`target` fields with safe defaults, plus help text stating the
   approval round trip is a *separate* message and that only the currently pending decision
