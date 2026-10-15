@@ -182,6 +182,23 @@ job's approval is ever surfaced.
   true. Do not relax `queue.required` — a control node that cannot report or act on the queue's
   job has no way to enforce the exact-decision rule.
 
+* **Carried from Task 3 (review) — make these structural, not discipline:**
+  * Narrow `HermesQueue.activeJob(requestId)` to return a **closed projection**
+    (`{ id, runId, connectionId, approval }`) instead of the internal job object, so
+    `job.spec` / `job.message` / `job.body` are unreachable from the Control node by
+    construction rather than by convention.
+  * Make the no-stale-claim invariant airtight: either clear `job.approval` on the terminal
+    poll exits (the `completed` / `failed` returns precede the clearing branch) or reject a
+    settled job in `activeJob()`. Today it is only safe because `this.active` is nulled
+    synchronously and a stale POST would 409 server-side — which is a defence-in-depth
+    argument, not an invariant.
+  * Import the `APPROVAL_CHOICES` export from `lib/approval.js` rather than restating the four
+    literals in the node, and thread the Connection key as `secrets` into **both** the
+    diagnostics projection and `lib/approval.js`'s preview text (a single Task 2 finding now
+    spans two modules).
+  * `pendingApproval` sets `requestId: undefined` as an own property while its docstring says
+    absent fields are omitted; make the code match the comment.
+
 * `hermes-control` gains `allowApprove` (default **false**), `approvalChoices` (the choices
   this node may ever send, default none) and optional `includeApprovalPreview` (default
   **false**). Approval requires **both** `msg.hermesControl.requestId` (the queue job) and
@@ -222,6 +239,13 @@ job's approval is ever surfaced.
   `connection`, `probe`/`target` fields with safe defaults, plus help text stating the
   approval round trip is a *separate* message and that only the currently pending decision
   can be answered.
+* **Document the new lifecycle surface** (nothing fails today if it drifts): `approvalRequestId`
+  and `approvalChoices` on the `waiting_for_approval` lifecycle event, the `includeApprovalPreview`
+  Queue option, the preview fields it enables, and the Control node's approval inputs. State the
+  **accepted staleness race** explicitly: the Control node reads the pending decision and then
+  issues the POST asynchronously, so the decision may be answered in between, and the correct
+  outcome is the server's 409 (`errorCode: approval_not_pending` / `approval_not_active`) surfaced
+  on the error output — not a local error and never a retry.
 * `README.md` + `docs/agent-integration.md` + `docs/adapter-contract.md` + `AGENTS.md`:
   retract "interactive approval submission not implemented", document the Control actions,
   the exact-decision rule, the per-run single-pending-decision bound, and that `session` /
