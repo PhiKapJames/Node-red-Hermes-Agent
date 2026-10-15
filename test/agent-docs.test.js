@@ -36,6 +36,12 @@ test('agent instructions describe all five registered node types', () => {
     }
 });
 
+test('runbook distinguishes cancelling an active run from cancelling a queued job', () => {
+    const guide = read('docs/agent-integration.md');
+    assert.match(guide, /`cancel` of the active run[\s\S]*?`cancellationRequested: true`[\s\S]*?\*\*keeps the active slot\*\*/);
+    assert.match(guide, /Cancelling a queued job by ID returns `cancelled: true` immediately/);
+});
+
 test('existing disabled integration example has referenced configs and ordered Agent outputs', () => {
     const nodes = JSON.parse(read('examples/sync-and-async.json'));
     const byId = new Map(nodes.map(node => [node.id, node]));

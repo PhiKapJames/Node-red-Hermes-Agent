@@ -223,6 +223,7 @@ Supported actions: `status`, `pause`, `resume`, `clear`, `cancel`, `reset`, `rec
 
 - `pause` blocks new starts but does not interrupt active work; `resume` refuses a queue that still has uncertain remote work.
 - `clear` cancels waiting jobs only.
+- `cancel` of the active run, with or without its `requestId`, returns `cancellationRequested: true` and, like `reset`, **keeps the active slot** until remote termination is verified or the queue stops as uncertain. Cancelling a queued job by ID returns `cancelled: true` immediately.
 - `reset` clears pending work, rotates generated client sessions and requests cancellation of the active run. A normal reset **keeps the active slot** until remote termination is verified or the queue stops as uncertain.
 - `recover` attempts to confirm remote termination for a known uncertain run. An unknown run ID may require an operator to inspect Hermes outside Node-RED.
 - Force reset abandons local tracking and can permit overlapping remote work. Do not present it as confirmation of cancellation.
