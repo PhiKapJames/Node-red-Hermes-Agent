@@ -7,6 +7,7 @@ const path = require('node:path');
 const { HermesClient } = require('../lib/client');
 const { HermesQueue } = require('../lib/queue');
 const { prepareRequest } = require('../lib/request');
+const { APPROVAL_CHOICES, allowedChoices, pendingApproval, approvalSubmission } = require('../lib/approval');
 const { publicError } = require('../lib/errors');
 const approvalFixtures = require('./support/fixtures/approval.json');
 const waitingFixture = require('./support/fixtures/run-waiting-approval.json');
@@ -37,9 +38,12 @@ const DONE = { status: 'completed', output: 'Done.' };
 
 /** One async job walking a scripted status sequence, with every lifecycle event recorded. */
 function scripted(t, replies, options = {}) {
+    const { key, ...queueOptions } = options;
     const state = { polls: 0 };
     const approvals = [];
     const client = {
+        // The queue is allowed to know the key only as a redaction secret for the opt-in preview.
+        getKey: () => key || '',
         start: async () => ({ run_id: 'run-1' }),
         status: async () => {
             const reply = replies[Math.min(state.polls++, replies.length - 1)];
@@ -51,7 +55,7 @@ function scripted(t, replies, options = {}) {
     };
     const q = new HermesQueue({
         clientFor: () => client, pollIntervalMs: 5, jobTimeoutMs: 4000, stopTimeoutMs: 40,
-        retryDelayMs: 5, requestTimeoutMs: 100, ...options
+        retryDelayMs: 5, requestTimeoutMs: 100, ...queueOptions
     });
     t.after(() => q.close());
     const events = [];
@@ -180,8 +184,11 @@ test('a decision with no usable request_id is surfaced but never made addressabl
     // event, and it must not leave anything a lookup can resolve: two absent values comparing
     // equal must never be what authorises an approval.
     const unaddressable = { status: 'waiting_for_approval', approval: { request_id: 'x'.repeat(257), choices: ['once'] } };
-    const { q, ticket } = scripted(t, [unaddressable], { jobTimeoutMs: 400, stopTimeoutMs: 20 });
-    await until(() => q.activeJob(ticket.requestId)?.phase === 'waiting_for_approval');
+    const { q, events, ticket } = scripted(t, [unaddressable], { jobTimeoutMs: 400, stopTimeoutMs: 20 });
+    // Waiting on the reported decision is what proves the poll really ran: the job lookup no longer
+    // exposes a phase at all, and a claim that was never taken would also read as null.
+    await until(() => events.some(event => event.status === 'waiting_for_approval'));
+    assert.equal(events.filter(event => event.status === 'waiting_for_approval').length, 1, 'surfaced once, informationally');
     assert.equal(q.activeJob(ticket.requestId).approval, null, 'nothing here can be answered');
     await assert.rejects(ticket.finished, { code: 'JOB_TIMEOUT' });
 });
@@ -260,6 +267,102 @@ test('the preview opt-in is a queue setting that no other input can enable', asy
     assert.equal(Object.hasOwn(pending[0], 'approvalCommand'), true);
 });
 
+// --- the projection is exactly what its docstring says ----------------------------------------
+
+test('a projection stores no request id it cannot use', () => {
+    const unusable = pendingApproval({ request_id: 'x'.repeat(257), choices: ['once'] }, {});
+    assert.equal(Object.hasOwn(unusable, 'requestId'), false, 'an absent field is omitted, not stored as undefined');
+    assert.deepEqual(unusable.choices, ['once']);
+    assert.equal(pendingApproval({ request_id: ID, choices: ['once'] }, {}).requestId, ID);
+    for (const value of [undefined, null, 'approval', 7, []]) assert.equal(pendingApproval(value, {}), null);
+});
+
+test('the preview is redacted with the connection key among the secrets', async t => {
+    const command = 'deploy fixture-only-key and Bearer synthetic-value-never-real';
+    const raw = { request_id: ID, choices: ['once'], command };
+    assert.equal(
+        pendingApproval(raw, { includeApprovalPreview: true, secrets: ['fixture-only-key'] }).command,
+        'deploy [REDACTED] and Bearer [REDACTED]'
+    );
+    // With no key to match by name only the generic patterns apply, and they still apply.
+    assert.equal(pendingApproval(raw, { includeApprovalPreview: true }).command, 'deploy fixture-only-key and Bearer [REDACTED]');
+    // And the queue threads the key of the client that is actually running the job, so a server
+    // that echoes its own received key inside a command cannot surface it.
+    const pending = await pendingEvents(t, [waiting(ID, ['once'], { command }), DONE], { includeApprovalPreview: true, key: 'fixture-only-key' });
+    assert.equal(pending[0].approvalCommand, 'deploy [REDACTED] and Bearer [REDACTED]');
+    assert.doesNotMatch(JSON.stringify(pending[0]), /fixture-only-key/);
+});
+
+// --- the approval vocabulary has one home, and the node does not restate it -------------------
+
+test('the four decision literals are stated once, in lib/approval.js', () => {
+    assert.deepEqual(APPROVAL_CHOICES, ['once', 'session', 'always', 'deny']);
+    assert.doesNotMatch(fs.readFileSync(path.join(__dirname, '..', 'nodes', 'hermes.js'), 'utf8'), /'once'|'session'|'always'|'deny'/);
+});
+
+test('the node-configured allowlist keeps only exact literals', () => {
+    assert.deepEqual([...allowedChoices('once,deny')], ['once', 'deny']);
+    assert.deepEqual(allowedChoices(['always', 'bogus', 'ONCE', ' once ', '']), ['always', 'once']);
+    assert.deepEqual(allowedChoices('once,once'), ['once']);
+    assert.deepEqual(allowedChoices(undefined), [], 'a node that configured nothing may send nothing');
+    assert.deepEqual(allowedChoices('approve'), [], 'a server alias is never normalised into a grant');
+    assert.deepEqual(allowedChoices({ choice: 'once' }), []);
+});
+
+// --- the exact-decision rule a Control node enforces before anything is dispatched -------------
+
+const pendingView = (approvalRequestId = ID, choices = ALL) => ({
+    id: 'job-1', runId: 'run-1', connectionId: 'connection-1',
+    approval: approvalRequestId ? { requestId: approvalRequestId, choices } : null
+});
+const allowed = { allowApprove: true, choices: 'once,deny' };
+const addressed = { requestId: 'job-1', approvalRequestId: ID, choice: 'once' };
+
+test('an approval submission names one decision and carries only what a POST needs', () => {
+    assert.deepEqual(approvalSubmission({ ...allowed, job: pendingView(), control: addressed }), {
+        choice: 'once', requestId: 'job-1', approvalRequestId: ID, runId: 'run-1', connectionId: 'connection-1'
+    });
+    // An array in flow JSON is as good as the editor's comma-separated text.
+    assert.deepEqual(approvalSubmission({
+        allowApprove: true, choices: ['once', 'deny'], job: pendingView(ID, ['deny', 'once']),
+        control: { ...addressed, choice: 'deny' }
+    }).choice, 'deny');
+});
+
+test('an approval that is not exactly the currently pending decision is refused locally', () => {
+    const cases = [
+        ['a node with no approval permission at all', {}, pendingView(), addressed, 'OVERRIDE_DISABLED'],
+        ['a legacy flow whose field is absent', { choices: 'once' }, pendingView(), addressed, 'OVERRIDE_DISABLED'],
+        ['a permission string is not a permission', { allowApprove: 'true', choices: 'once' }, pendingView(), addressed, 'OVERRIDE_DISABLED'],
+        ['a node that allows no choice', { allowApprove: true }, pendingView(), addressed, 'OVERRIDE_DISABLED'],
+        ['a node whose allowlist is all garbage', { allowApprove: true, choices: 'yolo' }, pendingView(), addressed, 'OVERRIDE_DISABLED'],
+        ['a choice the node does not allow', allowed, pendingView(), { ...addressed, choice: 'always' }, 'OVERRIDE_DISABLED'],
+        ['a choice the server did not advertise for this decision', allowed, pendingView(ID, ['once']), { ...addressed, choice: 'deny' }, 'OVERRIDE_DISABLED'],
+        ['a decision advertising no choices', allowed, pendingView(ID, []), addressed, 'OVERRIDE_DISABLED'],
+        ['no queue job id', allowed, pendingView(), { approvalRequestId: ID, choice: 'once' }, 'INVALID_INPUT'],
+        ['no decision id', allowed, pendingView(), { requestId: 'job-1', choice: 'once' }, 'INVALID_INPUT'],
+        ['a decision id that is not a string', allowed, pendingView(), { ...addressed, approvalRequestId: 42 }, 'INVALID_INPUT'],
+        ['a padded decision id is not the same id', allowed, pendingView(), { ...addressed, approvalRequestId: ` ${ID} ` }, 'INVALID_INPUT'],
+        // The failure this rule exists for: a late click arrives after a newer decision replaced it.
+        ['a stale decision id', allowed, pendingView(OTHER), addressed, 'INVALID_INPUT'],
+        ['a job with nothing pending', allowed, pendingView(null), addressed, 'INVALID_INPUT'],
+        ['a job id that resolves to no active job', allowed, null, addressed, 'REQUEST_NOT_FOUND'],
+        ['no choice at all', allowed, pendingView(), { requestId: 'job-1', approvalRequestId: ID }, 'INVALID_INPUT'],
+        ['a choice that is not one of the four literals', allowed, pendingView(), { ...addressed, choice: 'approve' }, 'INVALID_INPUT'],
+        ['a choice with stray whitespace', allowed, pendingView(), { ...addressed, choice: ' once' }, 'INVALID_INPUT'],
+        ['a message that is not an object', allowed, pendingView(), undefined, 'INVALID_INPUT']
+    ];
+    for (const [why, config, job, control, code] of cases) {
+        assert.throws(() => approvalSubmission({ ...config, job, control }), error => {
+            assert.equal(error.code, code, why);
+            assert.equal(error.retryable, false, why);
+            assert.doesNotMatch(error.message, new RegExp(ID), `${why}: an id is never echoed back`);
+            return true;
+        }, why);
+    }
+});
+
+
 // --- the narrow job lookup an approval action needs ------------------------------------------
 
 test('only the current active job is addressable, and only while it is active', async t => {
@@ -281,6 +384,54 @@ test('only the current active job is addressable, and only while it is active', 
     assert.equal(q.activeJob(null), null);
     await ticket.finished;
     assert.equal(q.activeJob(ticket.requestId), null, 'a finished job is addressable by nothing');
+});
+
+test('the job lookup hands out a closed projection, so a prompt is unreachable from it', async t => {
+    const { q, ticket } = scripted(t, [waiting(ID), RUNNING, DONE]);
+    await until(() => q.activeJob(ticket.requestId));
+    const view = q.activeJob(ticket.requestId);
+    assert.deepEqual(Object.keys(view).sort(), ['approval', 'connectionId', 'id', 'runId']);
+    assert.equal(view.connectionId, 'server-1', 'an approval action routes on this, never on anything in msg');
+    // The whole point of the projection: nothing here may be forwarded, logged or answered with.
+    assert.equal(Object.hasOwn(view, 'spec'), false, 'the request shape is unreachable');
+    assert.equal(Object.hasOwn(view, 'message'), false, 'the prompt is unreachable');
+    assert.equal(Object.hasOwn(view, 'body'), false, 'the request body is unreachable');
+    assert.equal(Object.hasOwn(view, 'controller'), false, 'a second node cannot abort a job it does not own');
+    assert.doesNotMatch(JSON.stringify(view), /SECRET_PROMPT|client-1|idempotency/i);
+    assert.throws(() => { view.approval = null; }, TypeError, 'the projection cannot be edited into a claim');
+    assert.throws(() => view.approval.choices.push('once'), TypeError, 'advertised choices cannot be widened');
+});
+
+test('a terminal poll releases the claim on a decision the run can no longer answer', async t => {
+    // Until the terminal status is read, the job's claim is what makes a decision answerable. It
+    // used to survive `completed`/`failed`, and only the queue dropping the job a moment later made
+    // that harmless  -  a defence-in-depth argument, not an invariant. Now the claim goes with it.
+    const terminals = [
+        ['completed', DONE],
+        ['failed', { status: 'failed' }],
+        ['an unrecognized status', { status: 'sideways' }]
+    ];
+    for (const [why, terminal] of terminals) {
+        const { q, events, ticket } = scripted(t, [waiting(ID), terminal]);
+        let internal;
+        q.on('progress', job => { internal = job; });
+        await until(() => events.some(event => event.status === 'waiting_for_approval'));
+        assert.equal(internal.approval?.requestId, ID, why);
+        await ticket.finished.catch(() => {});
+        assert.equal(internal.approval, null, `${why}: the claim is gone with the terminal status`);
+    }
+});
+
+test('a settled job is addressable by nothing, even as its terminal event is delivered', async t => {
+    // `settle()` marks the job settled and emits before the queue clears its active slot, so this
+    // is the one moment a finished run is still the queue's active job. It must be unanswerable.
+    const { q, ticket } = scripted(t, [waiting(ID), DONE]);
+    const addressable = [];
+    q.on('progress', (_job, event) => {
+        if (event.status === 'completed') addressable.push(q.activeJob(event.requestId) === null);
+    });
+    await ticket.finished;
+    assert.deepEqual(addressable, [true]);
 });
 
 test('an answered decision stops being addressable as soon as the run is running again', async t => {

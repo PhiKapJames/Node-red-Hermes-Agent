@@ -75,6 +75,24 @@ test('credential-shaped or line-forging text in an allowlisted field cannot surv
     assert.ok(summary.status.length <= 200);
 });
 
+test('a summary is redacted with the connection key among the secrets', () => {
+    // A server that echoes the bearer it just received must not be able to hand it back on a plate.
+    const echo = {
+        status: 'ready for fixture-only-key', version: 'fixture-only-key',
+        features: { run_approval_response: true }, endpoints: { run_approval: { path: '/v1/fixture-only-key/approval' } }
+    };
+    assert.deepEqual(projectReadiness(echo, { secrets: ['fixture-only-key'] }), {
+        target: 'readiness', status: 'ready for [REDACTED]', version: '[REDACTED]', gateway_busy: false
+    });
+    assert.equal(projectCapabilities(echo, { secrets: ['fixture-only-key'] }).run_approval_path, '/v1/[REDACTED]/approval');
+    // Without a key to match by name the summary is still closed; only the by-name scrubbing is absent.
+    assert.equal(projectReadiness(echo).status, 'ready for fixture-only-key');
+    assert.deepEqual(projectReadiness(echo, { secrets: [undefined, '', null] }).status, 'ready for fixture-only-key');
+});
+
+// A payload that is not the advertised shape still yields a closed summary, and a flag the server
+// never reported is reported as `false`: an absent flag is never read as support, and the palette
+// help says so in the same words (`flag()` in lib/diagnostics.js).
 test('a payload that is not the advertised shape still yields a closed summary', () => {
     for (const value of [undefined, null, {}, 'ready', [], 7]) {
         assert.deepEqual(projectCapabilities(value), {
