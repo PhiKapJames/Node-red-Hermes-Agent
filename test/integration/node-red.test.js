@@ -4,6 +4,8 @@ const assert = require('node:assert/strict');
 const http = require('node:http');
 const { setTimeout: delay } = require('node:timers/promises');
 const { startRuntime } = require('../support/runtime.cjs');
+const capabilitiesFixture = require('../support/fixtures/capabilities.json');
+const healthFixture = require('../support/fixtures/health-detailed.json');
 
 async function setup(t, target, options = {}) {
     const calls = [];
@@ -13,7 +15,20 @@ async function setup(t, target, options = {}) {
         const body = chunks.length ? JSON.parse(Buffer.concat(chunks)) : null;
         calls.push({ url: req.url, method: req.method, headers: req.headers, body });
         res.setHeader('Content-Type', 'application/json');
-        if (options.denied) { res.writeHead(403); res.end(JSON.stringify({ error: { message: 'Rejected fixture-only-key' } })); }
+        if (options.errorCode !== undefined) {
+            // The verified upstream envelope is {error:{message,type,param,code}}.
+            res.writeHead(400);
+            res.end(JSON.stringify({ error: { message: 'Fixture rejected the run.', type: 'invalid_request_error', param: null, code: options.errorCode } }));
+        }
+        else if (req.url.endsWith('/capabilities') || req.url.endsWith('/health/detailed')) {
+            if (options.probeStatus) {
+                res.writeHead(options.probeStatus);
+                res.end(JSON.stringify({ error: { message: 'Fixture probe unavailable.', type: 'server_error', param: null, code: 'probe_unavailable' } }));
+            } else {
+                res.end(JSON.stringify(req.url.endsWith('/capabilities') ? capabilitiesFixture : healthFixture));
+            }
+        }
+        else if (options.denied) { res.writeHead(403); res.end(JSON.stringify({ error: { message: 'Rejected fixture-only-key' } })); }
         else if (req.url.endsWith('/chat/completions')) res.end(JSON.stringify({ choices: [{ message: { content: 'Full answer.', reasoning_content: 'PRIVATE_REASONING' }, finish_reason: 'stop' }] }));
         else if (req.method === 'POST' && req.url.endsWith('/runs')) { res.statusCode = 202; res.end(JSON.stringify({ run_id: `run-${calls.length}`, status: 'started' })); }
         else res.end(JSON.stringify({ status: 'completed', output: 'Full answer.', reasoning_content: 'PRIVATE_REASONING' }));
@@ -149,3 +164,121 @@ test('real Node-RED 5: per-client sessions, global reset and orderly shutdown', 
     assert.notEqual(result.hermes.sessionId, sessions[0]);
     await runtime.close();
 });
+
+test('real Node-RED 5: probe summarizes capabilities and readiness at their own scopes', { timeout: 30000 }, async t => {
+    const { runtime, calls, flows } = await setup(t,
+        { type: 'hermes-control', action: 'probe', target: 'capabilities', connection: 'connection', wires: [['out'], ['errors']] }, {
+            extra: [
+                { id: 'readiness-in', type: 'fixture-input', z: 'tab', wires: [['readiness']] },
+                { id: 'readiness', type: 'hermes-control', z: 'tab', queue: 'queue', connection: 'connection', action: 'probe', target: 'readiness', wires: [['out'], ['errors']] }
+            ]
+        });
+    runtime.send({ _msgid: 'probe-capabilities' }, 'input');
+    const capabilities = await runtime.next('out');
+    runtime.send({ _msgid: 'probe-readiness' }, 'readiness-in');
+    const readiness = await runtime.next('out');
+    assert.deepEqual(capabilities.payload, {
+        target: 'capabilities',
+        model: 'hermes-4-mock',
+        auth_type: 'bearer',
+        auth_required: true,
+        runtime_mode: 'server_agent',
+        features: { run_status: true, run_stop: true, run_approval_response: true },
+        run_approval_path: '/v1/runs/{run_id}/approval'
+    });
+    assert.deepEqual(capabilities.hermes.probe, { target: 'capabilities', ok: true, stale: false, approvalSupported: true });
+    assert.deepEqual(readiness.payload, {
+        target: 'readiness', status: 'ready', readiness_status: 'ready', version: '0.21.6',
+        gateway_state: 'running', gateway_busy: true, active_agents: 1
+    });
+    assert.deepEqual(readiness.hermes.probe, { target: 'readiness', ok: true, stale: false });
+    assert.equal(capabilities.hermesControl.action, 'probe');
+    assert.deepEqual(calls.map(call => `${call.method} ${call.url}`), ['GET /p/work/v1/capabilities', 'GET /p/work/health/detailed']);
+    assert.equal(calls[0].headers.authorization, 'Bearer fixture-only-key');
+    // Nothing nested or credential-shaped may ride along, and the probe never used the queue.
+    assert.doesNotMatch(JSON.stringify([capabilities, readiness]), /never-surfaced|browser_extension|Bearer synthetic|api_key|fixture-only-key|PRIVATE_REASONING/);
+    assert.doesNotMatch(JSON.stringify(flows), /fixture-only-key/);
+    const queue = await runtime.inspectQueue();
+    assert.deepEqual({ paused: queue.paused, pending: queue.pending, active: queue.active, uncertain: queue.uncertain, queued: queue.queued },
+        { paused: false, pending: 0, active: null, uncertain: null, queued: [] });
+    await delay(40);
+    assert.equal(runtime.messages('errors').length, 0);
+    assert.equal(runtime.messages('caught').length, 0);
+});
+
+test('real Node-RED 5: a failed probe is informational and never disturbs the queue', { timeout: 30000 }, async t => {
+    const { runtime, calls } = await setup(t,
+        { type: 'hermes-control', action: 'probe', target: 'capabilities', connection: 'connection', wires: [['out'], ['errors']] }, { probeStatus: 503 });
+    runtime.send({ _msgid: 'probe-fails' }, 'input');
+    const error = await runtime.next('errors');
+    const trace = await runtime.next('caught');
+    assert.equal(error.payload, null);
+    assert.equal(error.hermesControl.ok, false);
+    assert.equal(error.hermesControl.error.code, 'HTTP_503');
+    assert.equal(error.hermesControl.error.statusCode, 503);
+    assert.equal(error.hermesControl.error.errorCode, 'probe_unavailable');
+    // Fail closed: an unread capabilities document never leaves approval support looking available.
+    assert.deepEqual(error.hermes.probe, { target: 'capabilities', ok: false, stale: true, approvalSupported: false });
+    assert.equal(trace._msgid, 'probe-fails');
+    assert.equal(trace.hermesControl.error.code, 'HTTP_503');
+    const queue = await runtime.inspectQueue();
+    assert.deepEqual({ paused: queue.paused, pending: queue.pending, active: queue.active, uncertain: queue.uncertain },
+        { paused: false, pending: 0, active: null, uncertain: null });
+    assert.deepEqual(calls.map(call => call.url), ['/p/work/v1/capabilities']);
+    assert.doesNotMatch(JSON.stringify(error), /fixture-only-key/);
+    await delay(40);
+    assert.equal(runtime.messages('out').length, 0);
+    assert.equal(runtime.messages('errors').length, 1);
+});
+
+test('real Node-RED 5: probe refuses to guess a server, a target or a queue', { timeout: 30000 }, async t => {
+    // `connection: ''` is deliberate: a probe must not fall back to some other Connection just
+    // because a Queue is configured on the node.
+    // The extra nodes are wired to port 2 only (`[[], [...]]`), so an accidental success would be
+    // invisible rather than passing a test by reading a result.
+    const { runtime, calls } = await setup(t, { type: 'hermes-control', action: 'probe', target: 'capabilities', connection: '', wires: [['out'], ['errors']] }, {
+        extra: [
+            { id: 'other-connection', type: 'hermes-connection', baseUrl: 'http://127.0.0.1:1' },
+            { id: 'bad-target', type: 'hermes-control', z: 'tab', queue: 'queue', connection: 'connection', action: 'probe', target: 'everything', wires: [[], ['errors']] },
+            { id: 'prototype-target', type: 'hermes-control', z: 'tab', queue: 'queue', connection: 'connection', action: 'probe', target: 'toString', wires: [[], ['errors']] },
+            { id: 'queue-as-connection', type: 'hermes-control', z: 'tab', queue: 'queue', connection: 'queue', action: 'probe', target: 'capabilities', wires: [[], ['errors']] },
+            { id: 'other-node', type: 'hermes-control', z: 'tab', queue: 'queue', connection: 'other-connection', action: 'probe', target: 'capabilities', wires: [[], ['errors']] },
+            { id: 'message-mode', type: 'hermes-control', z: 'tab', queue: 'queue', connection: 'connection', action: 'message', wires: [[], ['errors']] },
+            ...['bad-target', 'prototype-target', 'queue-as-connection', 'other-node', 'message-mode'].map(id => ({ id: `${id}-in`, type: 'fixture-input', z: 'tab', wires: [[id]] }))
+        ]
+    });
+    const codes = [];
+    for (const id of ['input', 'bad-target-in', 'prototype-target-in', 'queue-as-connection-in', 'other-node-in']) {
+        runtime.send({}, id);
+        codes.push((await runtime.next('errors')).hermesControl.error.code);
+    }
+    // 'toString' is the important case: an inherited property name must not resolve to a route.
+    // The last node's own Connection has no credential, so MISSING_CREDENTIAL (raised inside that
+    // client, before dispatch) proves the probe used the node-configured Connection rather than
+    // falling back to the queue's or to another node's working client.
+    assert.deepEqual(codes, ['CONFIG', 'CONFIG', 'CONFIG', 'CONFIG', 'MISSING_CREDENTIAL']);
+    // A message can never select the probe action, only the node configuration can.
+    runtime.send({ hermesControl: { action: 'probe' } }, 'message-mode-in');
+    assert.equal((await runtime.next('errors')).hermesControl.error.code, 'INVALID_ACTION');
+    // None of them reached the network: the trusted server saw nothing, and the node whose own
+    // Connection points elsewhere could not use the queue's Connection instead.
+    assert.deepEqual(calls, []);
+    await delay(40);
+    assert.equal(runtime.messages('out').length, 0);
+});
+
+for (const [code, expected] of [['approval_not_pending', 'approval_not_pending'], ['NOT A VALID CODE', undefined]]) {
+    test(`real Node-RED 5: upstream error code ${expected ?? 'is dropped'} reaches the Agent error output`, { timeout: 30000 }, async t => {
+        const { runtime } = await setup(t, { type: 'hermes-agent', mode: 'async', wires: [['out'], ['events'], ['errors']] }, { errorCode: code });
+        runtime.send({ _msgid: 'coded-failure', payload: 'Hello' });
+        const error = await runtime.next('errors');
+        assert.equal(error.payload, null);
+        assert.equal(error.hermes.error.code, 'HTTP_400');
+        assert.equal(error.hermes.error.statusCode, 400);
+        assert.equal(error.hermes.error.errorCode, expected);
+        assert.equal(Object.hasOwn(error.hermes.error, 'errorCode'), expected !== undefined);
+        assert.equal(error.hermes.error.message, 'Fixture rejected the run.');
+        assert.doesNotMatch(JSON.stringify(error), /NOT A VALID CODE/);
+        assert.equal((await runtime.next('caught')).hermes.error.errorCode, expected);
+    });
+}

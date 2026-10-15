@@ -35,3 +35,25 @@ test('package core contains no application-specific radio defaults', () => {
         assert.doesNotMatch(content, /TellMe|channel_idx|pubkey_prefix|mc_global|West Meshter|MAX_BYTES\s*=\s*110/);
     }
 });
+test('the control editor adds probe with a trusted Connection and closed defaults', () => {
+    const html = fs.readFileSync(path.join(__dirname, '../nodes/hermes.html'), 'utf8');
+    const code = html.match(/<script type="text\/javascript">([\s\S]*?)<\/script>/)[1];
+    const definitions = {};
+    vm.runInNewContext(code, { RED: { nodes:{ registerType:(name, def) => { definitions[name] = def; } }, validators:{ number:() => value => Number.isFinite(Number(value)) } } });
+    const control = definitions['hermes-control'];
+    // Existing nodes must keep working unchanged: probe is opt-in and never a default.
+    assert.equal(control.defaults.action.value, 'status');
+    assert.equal(control.defaults.allowForce.value, false);
+    assert.equal(control.defaults.connection.type, 'hermes-connection');
+    assert.equal(control.defaults.connection.required, false);
+    assert.equal(control.defaults.target.value, 'capabilities');
+    assert.match(html, /<option value="probe">[^<]+<\/option>/);
+    const help = html.match(/data-help-name="hermes-control">([\s\S]*?)<\/script>/)[1];
+    assert.match(help, /Probe/);
+    assert.match(help, /never pauses the queue/);
+    assert.match(help, /unsupported/);
+    assert.match(help, /never accepts a URL, path or credential from msg/);
+    // A probe node without a Connection must fail closed at runtime, not fall back to the
+    // queue's Connection; that is covered by the real Node-RED 5 suite
+    // ('real Node-RED 5: probe refuses to guess a server, a target or a queue').
+});

@@ -1,9 +1,15 @@
 'use strict';
 
-const { HermesClient } = require('../lib/client');
+const { HermesClient, projectCapabilities, projectReadiness, approvalSupported } = require('../lib/client');
 const { HermesQueue } = require('../lib/queue');
 const { prepareRequest, plainObject } = require('../lib/request');
 const { HermesError, publicError } = require('../lib/errors');
+
+// The only probe targets this package knows, each mapping to one fixed route in lib/client.js.
+// A Set, not a lookup object, so an inherited property name (`toString`, `constructor`) is never
+// a hit. Anything else, including a legacy or hand-edited flow property, is rejected instead of
+// picking a route, so a probe can never become a general "call any endpoint" escape hatch.
+const PROBE_TARGETS = new Set(['capabilities', 'readiness']);
 
 function number(value, fallback, min, max, name) {
     const parsed = value === '' || value === undefined ? fallback : Number(value);
@@ -177,13 +183,42 @@ module.exports = function(RED) {
     }
     RED.nodes.registerType('hermes-agent', Agent);
 
+    // Control actions that talk to Hermes use only the Connection chosen on this node: never
+    // anything from msg, and never the queue's. One Queue config can be referenced by several
+    // Connections, so a queue-derived client could send a diagnostic, or an approval, to the
+    // wrong server. Task 4 reuses this one lookup for the approval action.
+    function trustedConnection(config) {
+        const connection = config.connection ? RED.nodes.getNode(config.connection) : null;
+        // The editor restricts the field to a Hermes Connection; this is the runtime gate that
+        // keeps a hand-edited flow from pointing an action at another node type's client.
+        if (!connection || connection.type !== 'hermes-connection' || !connection.client) {
+            throw new HermesError('CONFIG', 'Select a valid Hermes connection for this action.');
+        }
+        return connection;
+    }
+
     function Control(config) {
         RED.nodes.createNode(this, config);
         const node = this;
         const queue = RED.nodes.getNode(config.queue)?.scheduler;
+        // A probe is only ever the node's own fixed action with a node-configured target and
+        // Connection, so a message can neither select it nor choose a server. It is also the only
+        // action that does not consult the queue scheduler at all.
+        const probing = config.action === 'probe';
+        const probeTarget = probing && PROBE_TARGETS.has(config.target) ? config.target : undefined;
+        // `msg.hermes.probe` is the machine-readable conclusion. A capabilities probe that did
+        // not complete reports approval support as unsupported; readiness never claims it.
+        const probeOutcome = (ok, data) => ({
+            target: probeTarget,
+            ok,
+            stale: !ok,
+            ...(probeTarget === 'capabilities' ? { approvalSupported: ok ? approvalSupported(data) : false } : {})
+        });
+        const callerRequest = message => (plainObject(message.hermes) ? message.hermes : {});
         let closed = false;
         node.on('input', async (msg, send, done) => {
             let failure;
+            let secrets;
             try {
                 if (closed) return;
                 if (!queue) throw new HermesError('CONFIG', 'Select a shared Hermes queue.');
@@ -191,6 +226,23 @@ module.exports = function(RED) {
                 if (!plainObject(options)) throw new HermesError('INVALID_INPUT', 'hermesControl must be an object.');
                 const action = config.action === 'message' ? options.action : config.action || 'status';
                 if (options.force === true && config.allowForce !== true) throw new HermesError('OVERRIDE_DISABLED', 'Force reset is not enabled on this Control node.');
+                if (probing) {
+                    // Fail closed before any network call: an unknown target never picks a route.
+                    if (!probeTarget) throw new HermesError('CONFIG', 'Choose a probe target: capabilities or readiness.');
+                    const connection = trustedConnection(config);
+                    secrets = [connection.readKey?.() || ''];
+                    const data = probeTarget === 'capabilities'
+                        ? await connection.client.capabilities()
+                        : await connection.client.healthDetailed();
+                    if (closed) return;
+                    const out = clone(msg);
+                    out.payload = probeTarget === 'capabilities' ? projectCapabilities(data) : projectReadiness(data);
+                    out.hermes = { ...callerRequest(out), probe: probeOutcome(true, data) };
+                    out.hermesControl = { action: 'probe', ok: true, target: probeTarget };
+                    node.status({ fill: 'green', shape: 'dot', text: `probed ${probeTarget}` });
+                    send([out, null]);
+                    return;
+                }
                 const result = await queue.control(action, { requestId: options.requestId, force: options.force === true });
                 if (closed) return;
                 msg.payload = result;
@@ -199,10 +251,11 @@ module.exports = function(RED) {
                 send([msg, null]);
             } catch (error) {
                 if (closed) return;
-                const safe = publicError(error);
+                const safe = publicError(error, secrets || []);
                 const out = clone(msg);
                 out.payload = null;
                 out.hermesControl = { ok: false, error: safe };
+                if (probeTarget) out.hermes = { ...callerRequest(out), probe: probeOutcome(false) };
                 send([null, out]);
                 node.status({ fill: 'red', shape: 'ring', text: safe.code });
                 msg.payload = null;
