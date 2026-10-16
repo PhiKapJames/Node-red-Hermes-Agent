@@ -1,0 +1,67 @@
+{
+  "success": {
+    "status": 200,
+    "body": {
+      "object": "hermes.run.approval_response",
+      "run_id": "run_mock_0001",
+      "choice": "once",
+      "request_id": "0f1e2d3c4b5a69788796a5b4c3d2e1f0",
+      "resolved": 1
+    }
+  },
+  "invalidChoice": {
+    "status": 400,
+    "body": {
+      "error": {
+        "message": "Invalid approval choice; expected one of: always, deny, once, session",
+        "type": "invalid_request_error",
+        "param": null,
+        "code": "invalid_approval_choice"
+      }
+    }
+  },
+  "invalidRequest": {
+    "status": 400,
+    "body": {
+      "error": {
+        "message": "Approval request_id is invalid.",
+        "type": "invalid_request_error",
+        "param": null,
+        "code": "invalid_approval_request"
+      }
+    }
+  },
+  "notActive": {
+    "status": 409,
+    "body": {
+      "error": {
+        "message": "Run has no active approval session: run_mock_0001",
+        "type": "invalid_request_error",
+        "param": null,
+        "code": "approval_not_active"
+      }
+    }
+  },
+  "notPending": {
+    "status": 409,
+    "body": {
+      "error": {
+        "message": "Run has no pending approval: run_mock_0001",
+        "type": "invalid_request_error",
+        "param": null,
+        "code": "approval_not_pending"
+      }
+    }
+  },
+  "unparseableChoice": {
+    "status": 400,
+    "body": {
+      "error": {
+        "message": "Invalid approval choice; expected one of: always, deny, once, session",
+        "type": "invalid_request_error",
+        "param": null,
+        "code": "Bearer synthetic-value-never-real"
+      }
+    }
+  }
+}

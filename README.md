@@ -14,7 +14,7 @@ It does **not** implement application-specific channel routing, sender formats, 
 | **Hermes Queue** (configuration) | One active job and a bounded FIFO shared by all referencing nodes, even across flows/profiles. |
 | **Hermes Prepare** | Optional generic property mapper for input, client ID, author, context and instructions. |
 | **Hermes Agent** | Sync or async operation, with separate final-answer, lifecycle and error outputs. |
-| **Hermes Control** | Status, pause, resume, clear, cancel, reset and uncertain-run recovery. |
+| **Hermes Control** | Status, pause, resume, clear, cancel, reset, uncertain-run recovery, server capability/readiness probes, and one exactly-addressed approval decision. |
 
 ```text
 Application input -> application adapter -> [Prepare] -> Agent -> application output adapter
@@ -109,7 +109,7 @@ msg.hermes = {
 
 The module emits at most one successful final-answer message for a submitted job within a running process. It does not split, shorten or add punctuation to the answer. It does not copy API `reasoning_content`, raw headers, tool arguments or the connection's credential into output metadata.
 
-**Output 2 — lifecycle events:** `queued`, `starting`, `accepted`, `running`, `retrying`, `waiting_for_approval`, `stopping`, `completed`, `cancelled`, `failed` or `uncertain`. Event fields are in `msg.hermes`; `msg.payload` is null. Polls only emit a normal state event when state changes.
+**Output 2 — lifecycle events:** `queued`, `starting`, `accepted`, `running`, `retrying`, `waiting_for_approval`, `stopping`, `completed`, `cancelled`, `failed` or `uncertain`. Event fields are in `msg.hermes`; `msg.payload` is null. Polls only emit a normal state event when state changes. A `retrying` admission event carries an additive `delayMs` (the computed wait before the next attempt). A `waiting_for_approval` event carries `approvalRequestId` (the server decision ID, omitted when unusable) and `approvalChoices` (the decisions the server advertised for it). When the Queue's opt-in **Include approval preview** (`includeApprovalPreview`) is enabled it also carries bounded, redacted `approvalCommand` and `approvalDescription` text. Nothing else enables either field, `msg.hermes` cannot request them, and their presence never answers the decision.
 
 **Output 3 — errors:** `msg.hermes.error` includes a stable `code`, sanitized `message`, `statusCode`, `retryable` and `remoteUnknown`. `msg.payload` is null. Errors are passed to Node-RED through `done(error)` and also trigger a scoped Catch node; handle either output 3 or Catch to avoid duplicate application error notifications.
 
@@ -131,7 +131,7 @@ Model is omitted by default on both APIs. A profile name is not assumed to be a 
 
 ## Queue and reset semantics
 
-One Queue configuration is one global FIFO and one active job. Different clients keep different transcripts while being globally serialized. Separate Queue configurations create separate concurrency groups. The optional minimum start interval defaults to zero and applies globally within that queue. **Async HTTP wait** (`asyncRequestTimeout`) bounds individual admission/status requests; **Run deadline** bounds the overall job. The Connection timeout is the client default; Sync uses the run deadline.
+One Queue configuration is one global FIFO and one active job. Different clients keep different transcripts while being globally serialized. Separate Queue configurations create separate concurrency groups. The optional minimum start interval defaults to zero and applies globally within that queue. **Async HTTP wait** (`asyncRequestTimeout`) bounds individual admission/status requests; **Run deadline** bounds the overall job. The Connection timeout is the client default; Sync uses the run deadline. **Retry delay** (`retryDelay`) is the *base* wait before an eligible async admission retry; retries after an HTTP 429 grow exponentially from it (2 s, 4 s, 8 s, ...), growth is capped at 60 s, and every wait is additionally clamped to the run deadline remaining. A `retrying` lifecycle event reports the computed `delayMs`.
 
 Control messages go to a separate **Hermes Control** node:
 
@@ -140,20 +140,31 @@ msg.hermesControl = { action: "reset" };
 return msg;
 ```
 
-Configure Control to **From message**, or select a fixed action and send any message. A phrase in a normal Agent prompt never triggers queue control.
+Configure Control to **From message**, or select a fixed action and send any message. A phrase in a normal Agent prompt never triggers queue control. **Probe** and **Answer approval** are never chosen by message: `msg.hermesControl.action: "probe"` and `"approve"` are both rejected.
 
 - `status`: summary of active and queued jobs without prompt text or credentials. `pending` is always the true waiting count; `queued` is a bounded FIFO prefix (at most 50 entries) and `queuedTruncated` says whether entries were omitted.
-- `pause` / `resume`: block or resume new admissions; the active run is not paused.
-- `clear`: cancel waiting jobs without changing active work or sessions.
+- `pause`: blocks new starts; the active run is not paused.
+- `resume`: resumes admissions; refused while a run remains uncertain until `recover` confirms termination.
+- `clear`: cancels waiting jobs without changing active work or sessions.
 - `cancel`: cancel the active job, or `requestId` for a particular waiting/active job.
 - `reset`: clear the global queue, rotate generated sessions for all clients, request active cancellation, and discard stale final responses.
 - `recover`: attempt to confirm termination of a known but uncertain remote run.
+- `probe`: one `GET /v1/capabilities` or `GET /health/detailed` read through the Connection selected on the Control node, summarized to bounded booleans, clamped numbers and short single-line strings. It never touches the queue, and a failed probe never pauses it: it reports `hermes.probe.stale: true` and, for capabilities, `approvalSupported: false`. A feature flag the server does not report is reported as unsupported, never as support.
+- `approve`: relay exactly one decision for exactly one pending approval (see below).
+
+A stray `force: true` is not an override anywhere else: it is read for `reset` alone and every other action ignores it.
 
 A stop endpoint returning `stopping` is **not** proof of cancellation. The package polls for a terminal state within the cancellation grace period. If admission or cancellation remains uncertain, the queue pauses rather than launching overlapping work, and `status` keeps reporting that retained job as `uncertain` until `recover` confirms termination or a force reset discards it.
 
 For deliberate emergency recovery, enable **Allow force** on Control and send `{action:"reset", force:true}`. This releases local tracking; **remote work may continue**. A late run ID is still stopped when obtainable and its final answer is discarded. Force reset is not a security boundary or a guarantee of remote cancellation.
 
 Reset does not delete server transcripts, change a Hermes profile, or erase Hindsight memory. Explicit `sessionId` values belong to the caller and are not rewritten by reset. Generated client IDs/session attribution do not isolate a shared Hindsight bank.
+
+### Answering a pending approval
+
+A run that stops to ask permission reports `waiting_for_approval` on Agent output 2 with `approvalRequestId` and `approvalChoices`. This package never answers a decision on its own. Relaying one human decision is a separate message to a Control node configured to **Answer approval**, naming **both** the queue job (`requestId`) and the server decision (`approvalRequestId`); neither defaults to "the active one", so a late dashboard click cannot answer a newer decision.
+
+Two explicit settings enable it, both defaulting to no: **Allow answering one pending approval** (`allowApprove`) and a non-empty **Permitted choices** list. A `choice` is accepted only when this node permits it **and** the server advertised it for that decision; anything else is refused locally with zero HTTP calls. The approval is routed through the Connection that was admitted for that job, never through the Control node's own Connection, which belongs to Probe. An accepted approval never frees the queue slot early: polling continues until the run is terminal and the POST is never replayed. If the decision was answered elsewhere in the meantime, the correct outcome is the server's 409 (`approval_not_pending` or `approval_not_active`) on the error output, never a local error and never a retry. A `session` or `always` grant persists server-side on Hermes, where its own allowlists live, and is not revocable from Node-RED.
 
 ## Credentials and security
 
@@ -173,7 +184,7 @@ HTTP responses use asynchronous stream iteration. `AbortSignal.any()` and `Abort
 
 **Queues and pending-job tracking are in memory.** A Node-RED restart or deployment that recreates these nodes does not resume polling or replay waiting jobs. Shutdown requests cancellation where possible, but a lost connection can leave remote work executing. Generated conversations start fresh after restart to avoid resurrecting a pre-reset session; applications requiring continuity must persist and supply their own `sessionId`.
 
-There is no exactly-once delivery guarantee across process crashes. Durable job journaling, output acknowledgements, streaming SSE subscriptions and interactive approval submission are not implemented. Approval waits are surfaced as lifecycle events and remain active until resolved elsewhere, cancelled, or timed out. Model routing, web tools, skills, and long-term memory configuration are managed by the Hermes server.
+There is no exactly-once delivery guarantee across process crashes. Durable job journaling, output acknowledgements and streaming SSE subscriptions are not implemented. A run that waits for approval is surfaced as a `waiting_for_approval` lifecycle event and stays active until it is resolved - elsewhere, or through an explicitly configured Control approval node, which only ever relays one human decision - or it is cancelled or times out; nothing in this package chooses a decision by itself, and `session`/`always` grants are not revocable from Node-RED. Model routing, web tools, skills, and long-term memory configuration are managed by the Hermes server.
 
 ## Develop and test
 

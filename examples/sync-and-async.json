@@ -4,7 +4,7 @@
     "type": "tab",
     "label": "Hermes - generic sync and async",
     "disabled": true,
-    "info": "Configure the shared connection credential before enabling. No application-specific routing is included."
+    "info": "Configure the shared connection credential before enabling. No application-specific routing is included. The approval example answers nothing until you fill both IDs in its Inject node with values from a real waiting_for_approval lifecycle event."
   },
   {
     "id": "hermes-example-connection",
@@ -269,5 +269,104 @@
     "x": 660,
     "y": 460,
     "wires": []
+  },
+  {
+    "id": "hermes-example-probe-inject",
+    "type": "inject",
+    "z": "hermes-example-tab",
+    "name": "Probe capabilities",
+    "props": [
+      {
+        "p": "payload",
+        "vt": "date",
+        "v": ""
+      }
+    ],
+    "payload": "",
+    "payloadType": "date",
+    "once": false,
+    "repeat": "",
+    "crontab": "",
+    "x": 190,
+    "y": 560,
+    "wires": [
+      [
+        "hermes-example-probe"
+      ]
+    ]
+  },
+  {
+    "id": "hermes-example-probe",
+    "type": "hermes-control",
+    "z": "hermes-example-tab",
+    "name": "Probe server",
+    "queue": "hermes-example-queue",
+    "connection": "hermes-example-connection",
+    "action": "probe",
+    "target": "capabilities",
+    "allowForce": false,
+    "allowApprove": false,
+    "approvalChoices": "",
+    "x": 510,
+    "y": 560,
+    "wires": [
+      [
+        "hermes-example-control-debug"
+      ],
+      [
+        "hermes-example-error"
+      ]
+    ]
+  },
+  {
+    "id": "hermes-example-approval-inject",
+    "type": "inject",
+    "z": "hermes-example-tab",
+    "name": "Answer approval (fill both IDs first)",
+    "props": [
+      {
+        "p": "payload",
+        "vt": "json",
+        "v": "{}"
+      },
+      {
+        "p": "hermesControl",
+        "vt": "json",
+        "v": "{\"requestId\": \"REPLACE-with-msg.hermes.requestId\", \"approvalRequestId\": \"REPLACE-with-msg.hermes.approvalRequestId\", \"choice\": \"once\"}"
+      }
+    ],
+    "payload": "{}",
+    "payloadType": "json",
+    "once": false,
+    "repeat": "",
+    "crontab": "",
+    "x": 190,
+    "y": 660,
+    "wires": [
+      [
+        "hermes-example-approve"
+      ]
+    ]
+  },
+  {
+    "id": "hermes-example-approve",
+    "type": "hermes-control",
+    "z": "hermes-example-tab",
+    "name": "Answer one approval",
+    "queue": "hermes-example-queue",
+    "action": "approve",
+    "allowForce": false,
+    "allowApprove": true,
+    "approvalChoices": "once,deny",
+    "x": 510,
+    "y": 660,
+    "wires": [
+      [
+        "hermes-example-control-debug"
+      ],
+      [
+        "hermes-example-error"
+      ]
+    ]
   }
 ]

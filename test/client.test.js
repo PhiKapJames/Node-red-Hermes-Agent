@@ -3,6 +3,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('node:http');
 const { HermesClient, endpoint } = require('../lib/client');
+const { publicError } = require('../lib/errors');
 
 async function fixture(t, handler, profile = 'example') {
     const server = http.createServer(handler);
@@ -93,4 +94,50 @@ test('poll and stop use the same named profile and URL-encode run IDs', async t 
 test('invalid successful JSON is reported instead of triggering a parsing traceback', async t => {
     const client = await fixture(t, (_, res) => res.end('not JSON'));
     await assert.rejects(client.start({ input: 'x' }), error => error.code === 'INVALID_RESPONSE' && error.remoteUnknown);
+});
+test('the two probes hit their own URL scopes on a profile-prefixed base', async t => {
+    const routes = [];
+    const client = await fixture(t, (req, res) => { routes.push([req.method, req.url, req.headers.authorization]); res.end('{}'); });
+    await client.capabilities(); await client.healthDetailed();
+    assert.deepEqual(routes, [
+        ['GET', '/p/example/v1/capabilities', 'Bearer test-secret-credential'],
+        // /health/detailed is served at the profile root, so only the trailing /v1 is removed.
+        ['GET', '/p/example/health/detailed', 'Bearer test-secret-credential']
+    ]);
+});
+test('the readiness probe stays inside the root on an unprefixed base', async t => {
+    const routes = [];
+    const client = await fixture(t, (req, res) => { routes.push(req.url); res.end('{}'); }, '');
+    assert.equal(client.root, client.base.slice(0, -'/v1'.length));
+    await client.capabilities(); await client.healthDetailed();
+    assert.deepEqual(routes, ['/v1/capabilities', '/health/detailed']);
+});
+test('a non-2xx response carries the validated upstream machine-readable code', async t => {
+    const client = await fixture(t, (_, res) => {
+        res.writeHead(409);
+        res.end(JSON.stringify({ error: { message: 'Nothing is pending for that request.', type: 'invalid_request_error', param: null, code: 'approval_not_pending' } }));
+    });
+    await assert.rejects(client.capabilities(), error => {
+        assert.equal(error.code, 'HTTP_409');
+        assert.equal(error.statusCode, 409);
+        assert.equal(error.errorCode, 'approval_not_pending');
+        assert.equal(publicError(error).errorCode, 'approval_not_pending');
+        return true;
+    });
+});
+test('an unusable upstream error code is dropped instead of forwarded', async t => {
+    for (const code of ['APPROVAL_NOT_PENDING', 'approval not pending', 'a'.repeat(65), 'Bearer nope', 42, { nested: true }]) {
+        const client = await fixture(t, (_, res) => {
+            res.writeHead(400);
+            res.end(JSON.stringify({ error: { message: 'Rejected.', type: 'invalid_request_error', param: null, code } }));
+        });
+        const label = typeof code === 'string' ? code : JSON.stringify(code);
+        await assert.rejects(client.healthDetailed(), error => {
+            assert.equal(error.code, 'HTTP_400', label);
+            assert.equal(error.errorCode, undefined, label);
+            assert.equal(Object.hasOwn(publicError(error), 'errorCode'), false, label);
+            assert.doesNotMatch(JSON.stringify(publicError(error)), /APPROVAL_NOT_PENDING|Bearer nope|a{65}/);
+            return true;
+        }, label);
+    }
 });

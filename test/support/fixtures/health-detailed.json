@@ -1,0 +1,40 @@
+{
+  "status": "ready",
+  "readiness": {
+    "status": "ready",
+    "configured_model": "hermes-4-mock",
+    "checks": [
+      { "name": "model", "ok": true, "detail": "resolved" },
+      { "name": "credentials", "ok": true, "detail": "present" }
+    ]
+  },
+  "platform": "hermes-agent",
+  "version": "0.21.6",
+  "gateway_state": "running",
+  "platforms": {
+    "api_server": {
+      "state": "connected",
+      "metrics": {
+        "requests_in_flight": 1,
+        "requests_completed": 7,
+        "authorization": "Bearer synthetic-value-never-real",
+        "api_key": "synthetic-value-never-real"
+      }
+    },
+    "mock_transport": { "state": "disconnected" }
+  },
+  "api_server": {
+    "requests_in_flight": 1,
+    "requests_completed": 7,
+    "metrics_today": { "requests": 7, "errors": 0 },
+    "last_heartbeat": 1730000000
+  },
+  "metrics_today": { "requests": 7, "errors": 0 },
+  "last_heartbeat": 1730000000,
+  "active_agents": 1,
+  "gateway_busy": true,
+  "gateway_drainable": false,
+  "exit_reason": null,
+  "updated_at": "2026-10-15T00:00:00+00:00",
+  "pid": 4242
+}
