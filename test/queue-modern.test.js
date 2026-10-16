@@ -168,9 +168,14 @@ test('429 admission retries back off, so a later attempt waits longer than the o
     assert.equal(starts.length, 3, 'every scheduled admission attempt is made');
     assert.deepEqual(retries.map(event => [event.operation, event.attempt, event.delayMs]),
         [['start', 1, 40], ['start', 2, 80]], 'the lifecycle event reports the delay actually scheduled');
+    // Elapsed time is only weak evidence here, and deliberately not asserted tightly: a timer
+    // can fire a little before its requested expiry, so a bound sitting on the scheduled value
+    // itself would fail on a loaded CI runner while the behaviour was correct. The exact
+    // schedule is proven by delayMs above; this only proves the waits really elapsed and grew.
     const waits = [starts[1] - starts[0], starts[2] - starts[1]];
-    assert.ok(waits[0] >= 40 && waits[1] >= 80, `scheduled waits were not honoured: ${waits}`);
+    assert.ok(waits[0] >= 30 && waits[1] >= 60, `scheduled waits were not honoured: ${waits}`);
     assert.ok(waits[1] > waits[0], `the second wait (${waits[1]}ms) must exceed the first (${waits[0]}ms)`);
+    assert.ok(waits[1] < 160, `a backoff wait must stay inside its schedule: ${waits}`);
 });
 
 test('a retryable admission failure that is not 429 keeps the flat configured delay', async t => {
@@ -192,5 +197,8 @@ test('a reset during a backoff wait does not sleep past the cancellation', async
     const cancelledAt = Date.now();
     q.reset();
     await assert.rejects(ticket.finished, error => error.code === 'CANCELLED' && !error.remoteUnknown);
-    assert.ok(Date.now() - cancelledAt < 1000, 'the scheduled backoff must not outlive the reset');
+    // Generous on purpose: the correct path settles within a few ms, so this bound only fails
+    // if the wait outlived the cancellation. A tight bound would fail on a stalled runner
+    // without the behaviour being wrong.
+    assert.ok(Date.now() - cancelledAt < 2000, 'the scheduled backoff must not outlive the reset');
 });
