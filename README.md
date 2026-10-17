@@ -35,7 +35,7 @@ Install the supplied `.tgz` in the Node-RED user directory, then restart Node-RE
 
 ```sh
 cd ~/.node-red
-npm install /path/to/node-red-contrib-hermes-agent-0.4.0-beta.1.tgz
+npm install /path/to/node-red-contrib-hermes-agent-0.4.0-beta.2.tgz
 ```
 
 Or install the package directly from the GitHub repository:

@@ -1,8 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.4.0-beta.2 — Prerelease: connect-phase classification, approval relay and server diagnostics
 
-Nothing in this section is released: no version was bumped or tagged, and nothing here has been exercised against a live Hermes Agent server.
+Prerelease following 0.4.0-beta.1; nothing here has been exercised against a live Hermes Agent server and it must not be treated as production-ready.
 
 **Async admission backoff.** The Queue `retryDelay` setting is now the *base* wait: retries after an HTTP 429 admission response grow exponentially from it (2 s, 4 s, 8 s, ...), growth is capped at 60 s, and every wait is clamped to the run deadline remaining. Other retryable admission failures keep repeating the base delay. The `retrying` lifecycle event gained an additive `delayMs` field. Cancellation during a retry wait and the cancellation barrier are unchanged.
 
