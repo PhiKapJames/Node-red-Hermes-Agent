@@ -230,7 +230,8 @@ Supported actions: `status`, `pause`, `resume`, `clear`, `cancel`, `reset`, `rec
 - `recover` attempts to confirm remote termination for a known uncertain run. An unknown run ID may require an operator to inspect Hermes outside Node-RED.
 - `probe` reads `GET /v1/capabilities` or `GET /health/detailed` once through the Connection selected on the Control node and outputs a bounded summary of booleans, clamped numbers and short single-line strings; nested upstream maps are never copied. It reads nothing from and writes nothing to the queue, so a failed probe never pauses it: it reports `hermes.probe.stale: true` and, for capabilities, `approvalSupported: false`. A feature flag the server does not report is reported as unsupported, never as support.
 - `approve` relays exactly one human decision for exactly one pending approval, as described below.
-- Force reset abandons local tracking and can permit overlapping remote work. Do not present it as confirmation of cancellation.
+- A failure with code `NETWORK` where the connection was refused, timed out while connecting, or the host could not be resolved is **provably not dispatched**: no bytes reached the server, so the job fails retryably, the queue stays running, and the queue never enters the uncertain state for it. Neither `recover` nor a force reset is needed when Hermes is simply down — `ETIMEDOUT` while connecting counts here, which is what a VPN peer that is offline reports rather than a refusal. Every other failure on this page still can leave remote work uncertain: `ECONNRESET` or `socket hang up` after the request was sent, `HTTP_TIMEOUT`, `INVALID_RESPONSE` without a `run_id`, and `QUEUE_CLOSED` during admission.
+- Force reset abandons local tracking and can permit overlapping remote work. Do not present it as confirmation of cancellation. A non-force `reset` will not clear an uncertain job.
 
 ### Answering a pending approval (the `approve` action)
 
@@ -296,7 +297,8 @@ The queue's `status` snapshot provides `paused`, `closed`, `pending` (the true w
 | `OVERRIDE_DISABLED` | Per-message model override is disabled; or approval answering is not enabled on this Control node, or the choice is not permitted/advertised. Remove `msg.hermes.model`, or configure `allowApprove` plus explicit `approvalChoices` deliberately |
 | `approval_not_pending` / `approval_not_active` on Control output 2 | Accepted staleness race: that decision was already resolved elsewhere. The 409 is the correct outcome - it was not retried, and the run and queue are undisturbed |
 | `QUEUE_FULL` | Shared queue waiting capacity reached; application should retry later or apply backpressure |
-| `HTTP_TIMEOUT` / `NETWORK` | Verify connectivity, configured deadlines and server state; an async admission may have started remotely |
+| `NETWORK` — the connection was refused, timed out while connecting, or the host could not be resolved | **Provably not dispatched**: the job fails retryably, the queue keeps running and admits the next request after its cooldown; no operator action is needed |
+| `HTTP_TIMEOUT` / other `NETWORK` | Verify connectivity, configured deadlines and server state; an async admission may have started remotely |
 | `QUEUE_UNCERTAIN` | Stop accepting new work, inspect Hermes run state, use `recover` if safe; avoid indiscriminate force reset |
 | No destination reply but lifecycle arrives | Wire only Agent output 1 to final delivery; lifecycle output is not the reply |
 | Two error notifications | Output 3 and scoped Catch both fire; keep only one destination-error path |

@@ -154,7 +154,7 @@ Configure Control to **From message**, or select a fixed action and send any mes
 
 A stray `force: true` is not an override anywhere else: it is read for `reset` alone and every other action ignores it.
 
-A stop endpoint returning `stopping` is **not** proof of cancellation. The package polls for a terminal state within the cancellation grace period. If admission or cancellation remains uncertain, the queue pauses rather than launching overlapping work, and `status` keeps reporting that retained job as `uncertain` until `recover` confirms termination or a force reset discards it.
+A stop endpoint returning `stopping` is **not** proof of cancellation. The package polls for a terminal state within the cancellation grace period. If admission or cancellation remains uncertain, the queue pauses rather than launching overlapping work, and `status` keeps reporting that retained job as `uncertain` until `recover` confirms termination or a force reset discards it. A refused connection, a handshake timeout or an unresolved host is provably not dispatched, so the job fails retryably and the queue keeps running; a connection dropped after the request was sent still pauses the queue until `recover` or force reset.
 
 For deliberate emergency recovery, enable **Allow force** on Control and send `{action:"reset", force:true}`. This releases local tracking; **remote work may continue**. A late run ID is still stopped when obtainable and its final answer is discarded. Force reset is not a security boundary or a guarantee of remote cancellation.
 
