@@ -63,6 +63,20 @@ async function liveServer(t) {
     return `http://127.0.0.1:${server.address().port}`;
 }
 
+// lib/client.js drops `retryable` from an approval failure, because a replay might answer a
+// decision twice. That reasoning only holds once the request was dispatched: with no bytes on the
+// wire there is nothing on the server to double-answer, and a caller that cannot retry a provably
+// undelivered decision has no way to honour a human still waiting for it. The other half — that a
+// dispatched approval failure is never retryable — is pinned in test/approval.test.js.
+test('an approval that provably never connected stays retryable', async t => {
+    const client = refused();
+    t.after(() => client.close());
+    await assert.rejects(() => client.approve('run-1', { choice: 'once', requestId: 'approval-1' }), (error) => {
+        assert.deepEqual([error.code, error.remoteUnknown, error.retryable], ['NETWORK', false, true]);
+        return true;
+    });
+});
+
 test('a refused connect fails without pausing the queue and the next job runs', async t => {
     const url = await liveServer(t);
     let target = 'dead';
