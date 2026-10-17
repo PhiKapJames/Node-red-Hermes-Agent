@@ -148,10 +148,16 @@ test('connect-phase transport failures are provably not dispatched', async t => 
     assert.equal(notDispatched({ code: 'ENETUNREACH', syscall: 'connect' }), true);
     assert.equal(notDispatched({ code: 'ERR_DNS_MOVE_LIST_NOTFOUND' }), true);
     assert.equal(notDispatched({ code: 'ETIMEDOUT', syscall: 'connect' }), true);
-    assert.equal(notDispatched({ code: 'ECONNABORTED', syscall: 'read' }), false);
-    assert.equal(notDispatched({ code: 'ERR_INVALID_ARG_TYPE', syscall: undefined }), false);
-    assert.equal(notDispatched(new Error('plain')), false);
-    assert.equal(notDispatched(undefined), false);
+    // The gate is the connect *phase*, never the errno: the same code reported after bytes were
+    // written must stay uncertain. These pairs are the regression guard against an errno allowlist.
+    for (const error of [
+        { code: 'ECONNRESET', syscall: 'read' }, { code: 'ECONNRESET', syscall: 'write' },
+        { code: 'ETIMEDOUT', syscall: 'read' }, { code: 'EPIPE', syscall: 'write' },
+        { code: 'ERR_STREAM_WRITE_AFTER_END' }, { code: 'ECONNABORTED', syscall: 'accept' },
+        { code: 'ECONNABORTED', syscall: 'read' }, { code: 'ERR_INVALID_ARG_TYPE' },
+        new Error('socket hang up'), new Error('plain'),
+        { code: undefined, syscall: undefined }, {}, null, undefined
+    ]) assert.equal(notDispatched(error), false, `must stay uncertain: ${error && error.code}`);
     assert.equal(notDispatched({ message: 'connect ECONNREFUSED 127.0.0.1:1' }), false);
 
     // A refused port is a real connect failure through the real transport.

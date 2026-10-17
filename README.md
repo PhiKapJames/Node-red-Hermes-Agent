@@ -147,7 +147,7 @@ Configure Control to **From message**, or select a fixed action and send any mes
 - `resume`: resumes admissions; refused while a run remains uncertain until `recover` confirms termination.
 - `clear`: cancels waiting jobs without changing active work or sessions.
 - `cancel`: cancel the active job, or `requestId` for a particular waiting/active job.
-- `reset`: clear the global queue, rotate generated sessions for all clients, request active cancellation, and discard stale final responses.
+- `reset`: clear this queue, rotate generated sessions for all clients, request active cancellation, and discard stale final responses.
 - `recover`: attempt to confirm termination of a known but uncertain remote run.
 - `probe`: one `GET /v1/capabilities` or `GET /health/detailed` read through the Connection selected on the Control node, summarized to bounded booleans, clamped numbers and short single-line strings. It never touches the queue, and a failed probe never pauses it: it reports `hermes.probe.stale: true` and, for capabilities, `approvalSupported: false`. A feature flag the server does not report is reported as unsupported, never as support.
 - `approve`: relay exactly one decision for exactly one pending approval (see below).

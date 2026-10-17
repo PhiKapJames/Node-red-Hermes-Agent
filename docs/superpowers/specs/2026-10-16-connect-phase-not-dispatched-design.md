@@ -1,6 +1,6 @@
 # Connect-phase failures are provably not dispatched
 
-Date: 2026-10-16 · Issue: [#12](https://github.com/PhiKapJames/node-red-contrib-hermes-agent/issues/12) · Status: approved design, not yet implemented
+Date: 2026-10-16 · Issue: [#12](https://github.com/PhiKapJames/node-red-contrib-hermes-agent/issues/12) · Status: implemented on `fix/connect-phase-not-dispatched`
 
 ## Problem
 
@@ -102,8 +102,9 @@ Existing `NETWORK`/`HTTP_TIMEOUT` uncertainty tests in `test/queue.test.js` and
 ## Documentation updates
 
 - `docs/agent-integration.md`: uncertainty rules and the error-code table — state that connect
-  failures are provably not dispatched, keep the barrier wording for everything else, and add a
-  pointer to issue #10.
+  failures are provably not dispatched, keep the barrier wording for everything else. (The planned
+  pointer to #10 was dropped: that is a merged PR about cancel-barrier coverage, not a tracked
+  follow-up, and no shipped doc in this package references issue numbers.)
 - `README.md`: node help + status section, same wording.
 - `test/agent-docs.test.js`: extend the doc-consistency assertions if it pins the sentences changed.
 

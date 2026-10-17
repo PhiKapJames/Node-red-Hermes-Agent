@@ -12,8 +12,13 @@ const { prepareRequest } = require('../lib/request');
 const secret = () => 'test-only-secret';
 
 function queueFor(t, clientFor, options = {}) {
+    const produced = new Set();
     const queue = new HermesQueue({
-        clientFor,
+        clientFor: (...args) => {
+            const client = clientFor(...args);
+            produced.add(client);
+            return client;
+        },
         pollIntervalMs: 5,
         stopTimeoutMs: 1000,
         jobTimeoutMs: 5000,
@@ -21,7 +26,12 @@ function queueFor(t, clientFor, options = {}) {
         requestTimeoutMs: 1500,
         ...options
     });
-    t.after(() => queue.close());
+    // The queue owns scheduling, not sockets: without this the keep-alive connections of a
+    // successful job hold the test process open for the idle timeout.
+    t.after(async () => {
+        await queue.close();
+        for (const client of produced) if (typeof client.close === 'function') client.close();
+    });
     return queue;
 }
 
@@ -49,7 +59,7 @@ async function liveServer(t) {
         });
     });
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-    t.after(() => server.close());
+    t.after(() => { server.closeAllConnections(); return new Promise(resolve => server.close(resolve)); });
     return `http://127.0.0.1:${server.address().port}`;
 }
 
@@ -71,6 +81,7 @@ test('a refused connect fails without pausing the queue and the next job runs', 
 test('a queue that paused on an ambiguous failure recovers and runs the next job', async t => {
     const url = await liveServer(t);
     const realClient = new HermesClient({ baseUrl: url, getKey: secret });
+    t.after(() => realClient.close());
     const queue = queueFor(t, () => refused(), { startRetries: 1 });
 
     await submit(queue, 'first').finished.catch(() => {});
@@ -88,6 +99,8 @@ test('admission retries reuse one Idempotency-Key across refused connects', asyn
     const recorder = { start: (body, options) => { keys.push(options.headers['Idempotency-Key']); return client.start(body, options); } };
     queue.clientFor = () => recorder;
     await assert.rejects(submit(queue, 'x').finished, isNetwork);
+    assert.equal(keys.length, 3);
+    assert.match(keys[0], /^nr-/, 'a dropped Idempotency-Key must not read as a stable one');
     assert.deepEqual(keys, Array(3).fill(keys[0]));
     assert.deepEqual(attempts, [['start', 1], ['start', 2]]);
     assert.deepEqual([queue.snapshot().uncertain, queue.snapshot().paused], [null, false]);

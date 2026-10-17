@@ -49,6 +49,7 @@ test('runbook states that connect failures are not uncertain and list-reaches th
     const changelog = read('CHANGELOG.md');
     assert.match(guide, /connection was refused, timed out while connecting, or the host could not be resolved/);
     assert.match(guide, /provably not dispatched/i);
+    assert.match(guide, /will not be broadened to further failure classes without a major-version note/);
     assert.match(changelog, /connect-phase|connection was refused/);
 });
 
