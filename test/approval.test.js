@@ -681,7 +681,9 @@ test('the approval vocabulary has one home, and lib/client.js is transport only'
     const directory = path.join(__dirname, '..', 'lib');
     const files = fs.readdirSync(directory).filter(file => file.endsWith('.js')).sort();
     assert.deepEqual(files, ['approval.js', 'client.js', 'diagnostics.js', 'errors.js', 'queue.js', 'request.js', 'retry.js']);
-    assert.deepEqual(Object.keys(require('../lib/client')).sort(), ['HermesClient', 'endpoint']);
+    // `notDispatched` is the transport's own connect-phase classification, not part of the approval
+    // vocabulary: it is exported only so its errno/syscall rules can be pinned without a live socket.
+    assert.deepEqual(Object.keys(require('../lib/client')).sort(), ['HermesClient', 'endpoint', 'notDispatched']);
     assert.deepEqual(Object.keys(require('../lib/diagnostics')).sort(), ['approvalSupported', 'projectCapabilities', 'projectReadiness']);
     // check:syntax lists every source explicitly, so a new lib file must be added in its own commit.
     const script = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8')).scripts['check:syntax'];
