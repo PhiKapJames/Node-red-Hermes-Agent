@@ -147,14 +147,14 @@ Configure Control to **From message**, or select a fixed action and send any mes
 - `resume`: resumes admissions; refused while a run remains uncertain until `recover` confirms termination.
 - `clear`: cancels waiting jobs without changing active work or sessions.
 - `cancel`: cancel the active job, or `requestId` for a particular waiting/active job.
-- `reset`: clear the global queue, rotate generated sessions for all clients, request active cancellation, and discard stale final responses.
+- `reset`: clear this queue, rotate generated sessions for all clients, request active cancellation, and discard stale final responses.
 - `recover`: attempt to confirm termination of a known but uncertain remote run.
 - `probe`: one `GET /v1/capabilities` or `GET /health/detailed` read through the Connection selected on the Control node, summarized to bounded booleans, clamped numbers and short single-line strings. It never touches the queue, and a failed probe never pauses it: it reports `hermes.probe.stale: true` and, for capabilities, `approvalSupported: false`. A feature flag the server does not report is reported as unsupported, never as support.
 - `approve`: relay exactly one decision for exactly one pending approval (see below).
 
 A stray `force: true` is not an override anywhere else: it is read for `reset` alone and every other action ignores it.
 
-A stop endpoint returning `stopping` is **not** proof of cancellation. The package polls for a terminal state within the cancellation grace period. If admission or cancellation remains uncertain, the queue pauses rather than launching overlapping work, and `status` keeps reporting that retained job as `uncertain` until `recover` confirms termination or a force reset discards it.
+A stop endpoint returning `stopping` is **not** proof of cancellation. The package polls for a terminal state within the cancellation grace period. If admission or cancellation remains uncertain, the queue pauses rather than launching overlapping work, and `status` keeps reporting that retained job as `uncertain` until `recover` confirms termination or a force reset discards it. A refused connection, a handshake timeout or an unresolved host is provably not dispatched, so the job fails retryably and the queue keeps running; a connection dropped after the request was sent still pauses the queue until `recover` or force reset.
 
 For deliberate emergency recovery, enable **Allow force** on Control and send `{action:"reset", force:true}`. This releases local tracking; **remote work may continue**. A late run ID is still stopped when obtainable and its final answer is discarded. Force reset is not a security boundary or a guarantee of remote cancellation.
 

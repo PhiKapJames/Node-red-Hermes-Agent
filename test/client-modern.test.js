@@ -8,14 +8,18 @@ const os = require('node:os');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 const { once } = require('node:events');
-const { HermesClient } = require('../lib/client');
+const { HermesClient, notDispatched } = require('../lib/client');
 
 async function fixture(t, handler, options = {}) {
-    const server = options.server || http.createServer(handler);
-    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-    const client = new HermesClient({ baseUrl: `${options.server ? 'https' : 'http'}://127.0.0.1:${server.address().port}`, getKey: () => 'test-only-secret', ...options.client });
+    // options.config replaces the server entirely: point the client at a fixed address instead of a
+    // listening socket, for failures that never reach a server at all.
+    const address = options.config || null;
+    const server = address ? null : options.server || http.createServer(handler);
+    if (server) await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    const client = new HermesClient({ baseUrl: address || `${options.server ? 'https' : 'http'}://127.0.0.1:${server.address().port}`, getKey: () => 'test-only-secret', ...options.client });
     t.after(async () => {
         client.close();
+        if (!server) return;
         server.closeAllConnections();
         await new Promise(resolve => server.close(resolve));
     });
@@ -131,4 +135,40 @@ test('custom CA and mutual TLS are retained; default untrusted TLS is rejected',
     const untrusted = new HermesClient({ baseUrl: client.base, getKey: () => 'test-only-secret' });
     t.after(() => untrusted.close());
     await assert.rejects(untrusted.start({}), { code: 'NETWORK' });
+});
+
+// A failed TCP connect reports syscall 'connect' and ECONNREFUSED on every supported Node;
+// the two codes below are the only ones whose syscall is not already 'connect', and they are
+// pinned by name rather than probed at runtime. See the spec for the portability caveat.
+test('connect-phase transport failures are provably not dispatched', async t => {
+    assert.equal(notDispatched({ code: 'ECONNREFUSED', syscall: 'connect' }), true);
+    assert.equal(notDispatched({ code: 'ENOTFOUND', syscall: 'getaddrinfo' }), true);
+    assert.equal(notDispatched({ code: 'EAI_AGAIN', syscall: 'getaddrinfo' }), true);
+    assert.equal(notDispatched({ code: 'EHOSTUNREACH', syscall: 'connect' }), true);
+    assert.equal(notDispatched({ code: 'ENETUNREACH', syscall: 'connect' }), true);
+    assert.equal(notDispatched({ code: 'ERR_DNS_MOVE_LIST_NOTFOUND' }), true);
+    assert.equal(notDispatched({ code: 'ETIMEDOUT', syscall: 'connect' }), true);
+    // The gate is the connect *phase*, never the errno: the same code reported after bytes were
+    // written must stay uncertain. These pairs are the regression guard against an errno allowlist.
+    for (const error of [
+        { code: 'ECONNRESET', syscall: 'read' }, { code: 'ECONNRESET', syscall: 'write' },
+        { code: 'ETIMEDOUT', syscall: 'read' }, { code: 'EPIPE', syscall: 'write' },
+        { code: 'ERR_STREAM_WRITE_AFTER_END' }, { code: 'ECONNABORTED', syscall: 'accept' },
+        { code: 'ECONNABORTED', syscall: 'read' }, { code: 'ERR_INVALID_ARG_TYPE' },
+        new Error('socket hang up'), new Error('plain'),
+        { code: undefined, syscall: undefined }, {}, null, undefined
+    ]) assert.equal(notDispatched(error), false, `must stay uncertain: ${error && error.code}`);
+    assert.equal(notDispatched({ message: 'connect ECONNREFUSED 127.0.0.1:1' }), false);
+
+    // A refused port is a real connect failure through the real transport.
+    const { client: refusedClient } = await fixture(t, null, { config: 'http://127.0.0.1:9' });
+    await assert.rejects(refusedClient.start({ input: 'x' }), error =>
+        error.code === 'NETWORK' && error.remoteUnknown === false && error.retryable === true);
+    await assert.rejects(refusedClient.chat({ input: 'x' }), error =>
+        error.code === 'NETWORK' && error.remoteUnknown === false && error.retryable === true);
+
+    // A request that was never constructed keeps its existing classification.
+    const { client: configClient } = await fixture(t, null, { config: 'http://127.0.0.1:9' });
+    await assert.rejects(configClient.start({ input: 'x' }, { headers: { 'X-Hermes-Session-Id': 'bad\nheader' } }), error =>
+        error.code === 'REQUEST_CONFIG' && error.remoteUnknown === false && error.retryable === false);
 });

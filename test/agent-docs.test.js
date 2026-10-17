@@ -44,6 +44,15 @@ test('runbook distinguishes cancelling an active run from cancelling a queued jo
     assert.match(guide, /Cancelling a queued job by ID returns `cancelled: true` immediately/);
 });
 
+test('runbook states that connect failures are not uncertain and list-reaches the barrier', () => {
+    const guide = read('docs/agent-integration.md');
+    const changelog = read('CHANGELOG.md');
+    assert.match(guide, /connection was refused, timed out while connecting, or the host could not be resolved/);
+    assert.match(guide, /provably not dispatched/i);
+    assert.match(guide, /will not be broadened to further failure classes without a major-version note/);
+    assert.match(changelog, /connect-phase|connection was refused/);
+});
+
 test('existing disabled integration example has referenced configs and ordered Agent outputs', () => {
     const nodes = JSON.parse(read('examples/sync-and-async.json'));
     const byId = new Map(nodes.map(node => [node.id, node]));
