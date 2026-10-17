@@ -53,13 +53,13 @@ by the TCP connect attempt, so future errnos cannot be swept in.
 | --- | --- | --- | --- | --- |
 | Connect-phase `POST` failure (`syscall` `connect`/`getaddrinfo`, or `ERR_DNS_MOVE_LIST_NOTFOUND`) | `NETWORK` | `true` | `false` | stays `running`; next request admitted after `cooldownMs`; `startRetries` applies; `Idempotency-Key` unchanged across the admission retry |
 | Post-dispatch failure (`ECONNRESET`, `ERR_STREAM_WRITE_AFTER_END`, `EPIPE`, socket hang up, `HTTP_TIMEOUT`) | `NETWORK` | `true` | `true` | `uncertain` + paused (unchanged) |
-| Any `sync` failure | `NETWORK` | `true` | always `false` (unchanged) | untouched |
-| Unreachable host at connect, so `http.request()` itself throws | `NETWORK` | `true` | `false` | stays `running` |
+| Any failure on a `sync` (`chat`) call | `NETWORK` | `true` | classified the same way (`false` for connect-phase, `true` after dispatch) | untouched — `chat` never enters the queue |
 
-The last row is a consequence worth naming: `REQUEST_CONFIG` is reserved for **programmer**
-errors (`baseUrl` not absolute, non-positive `requestTimeout`) and is now also reached when
-`http.request()` throws synchronously. That branch reports `NETWORK`, because a connect-time
-failure is transient, not a configuration bug.
+One consequence of classifying in one place, `request()`:
+
+- `sync` mode gains the same accuracy on its error objects (`chat` is a `POST`, so a connect
+  failure used to claim `remoteUnknown: true`). Nothing about sync *queueing* changes — sync
+  requests never enter the queue, so they could never pause anything.
 
 Explicitly **not** in scope:
 
@@ -78,22 +78,26 @@ Explicitly **not** in scope:
    and `{ code: 'ENOTFOUND', syscall: 'getaddrinfo' }` and rejects `{ code: 'ECONNRESET' }`,
    `{}`, `undefined`, and `{ code: 'ERR_DNS_MOVE_LIST_NOTFOUND', syscall: undefined }` handled
    through the code branch.
-2. **Integration, real Node-RED 5**: unreachable port → `NETWORK`, `retryable true`,
-   `remoteUnknown false`, `queue.status().uncertain === null`, `status().state === 'running'`,
-   `status().paused === false`. Non-vacuity guard: the same assertion set must **fail** if
-   `notDispatched` is stubbed to `() => false`.
-3. **Integration**: after a connect failure, a second request is admitted (not rejected) once
-   `cooldownMs` has passed.
-4. **Integration**: `startRetries` is honoured for `ECONNREFUSED` with the `Idempotency-Key`
-   unchanged across the admission retries, and `status().failureStreak` reflects the attempts.
+2. **Integration, real transport**: connect failure to a closed port → `NETWORK`, retryable,
+   `remoteUnknown: false`, and `queue.snapshot()` shows `uncertain === null`,
+   `paused === false`, `active === null` (nothing retained, queue still `running`).
+   Non-vacuity guard: the same assertions must fail if `notDispatched` is stubbed to
+   `() => false`.
+3. **Integration**: after a connect failure settles, a second request is admitted (not rejected
+   with `QUEUE_UNCERTAIN`) once `cooldownMs` has passed.
+4. **Integration**: `startRetries` is honoured for a refused connection — the `retrying` progress
+   events show `operation: 'start'` at attempts 1 and 2 before the job fails — and the
+   `Idempotency-Key` the server would see is unchanged across the admission retries.
 5. **Integration regression**: a server that accepts the connection and destroys the socket
    **after** the request is read still pauses the queue with `remoteUnknown: true`.
-6. **Integration regression**: `mode: 'sync'` behaviour is unchanged (`remoteUnknown === false`).
-7. **Integration**: `http.request()` synchronous-throw path (malformed-but-constructed request)
-   yields `NETWORK` / `retryable: true` / `remoteUnknown: false`, not `REQUEST_CONFIG`.
+6. **Integration regression**: `sync` (`chat`) errors use the same classification (a connect
+   failure reports `remoteUnknown: false`) and never touch a queue.
+7. **Integration regression**: the `!req` fallback still reports `REQUEST_CONFIG` — it is not a
+   connect-phase errno signature, so it keeps today's behaviour.
 
 Existing `NETWORK`/`HTTP_TIMEOUT` uncertainty tests in `test/queue.test.js` and
-`test/queue-modern.test.js` are the regression floor and must stay green.
+`test/queue-modern.test.js` are the regression floor and must stay green, together with the
+`REQUEST_CONFIG` assertion in `test/client-modern.test.js`.
 
 ## Documentation updates
 
